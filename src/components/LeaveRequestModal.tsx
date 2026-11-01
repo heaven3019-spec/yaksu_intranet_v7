@@ -788,35 +788,80 @@ export const LeaveRequestModal: React.FC<LeaveRequestModalProps> = ({
             </div>
           )}
 
-          {/* 1. Leave Type Selector */}
+          {/* 1. Leave Type Selector - 50~60대 맞춤 2배 큰 글씨 및 시원한 터치 영역 */}
           <div>
-            <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
-              휴가 구분 <span className="text-rose-500">*</span>
+            <label className="block text-sm sm:text-base font-black text-slate-900 mb-2 flex items-center justify-between">
+              <span className="flex items-center space-x-1.5">
+                <span>휴가 구분 선택</span>
+                <span className="text-rose-500 font-black">*</span>
+              </span>
+              <span className="text-xs text-blue-600 font-bold bg-blue-50 px-2 py-0.5 rounded-md border border-blue-200">
+                원하는 휴가 유형을 터치하세요
+              </span>
             </label>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+
+            {/* 4 Primary Leave Types: 2x Big Text */}
+            <div className="grid grid-cols-2 gap-2.5 sm:gap-3 mb-2.5">
               {[
-                { type: 'ANNUAL' as LeaveType, label: '전일 연차', sub: '1.0일 차감' },
-                { type: 'HALF_AM' as LeaveType, label: '오전 반차', sub: '0.5일 (오전)' },
-                { type: 'HALF_PM' as LeaveType, label: '오후 반차', sub: '0.5일 (오후)' },
-                { type: 'HOURLY' as LeaveType, label: '시간차', sub: '1시간 단위 차감' },
+                { type: 'ANNUAL' as LeaveType, label: '전일 연차', sub: '1.0일 차감 (하루 종일)' },
+                { type: 'HALF_AM' as LeaveType, label: '오전 반차', sub: '0.5일 (오전 근무 제외)' },
+                { type: 'HALF_PM' as LeaveType, label: '오후 반차', sub: '0.5일 (오후 조기 퇴근)' },
+                { type: 'HOURLY' as LeaveType, label: '시간차 (외출)', sub: '1시간 단위 분할 차감' },
+              ].map((item) => {
+                const isSelected = leaveType === item.type;
+                return (
+                  <button
+                    type="button"
+                    key={item.type}
+                    onClick={() => setLeaveType(item.type)}
+                    className={`p-3.5 sm:p-4 rounded-2xl border-2 text-left transition-all cursor-pointer active:scale-[0.98] ${
+                      isSelected
+                        ? 'border-blue-600 bg-blue-50/90 text-blue-950 ring-2 ring-blue-500/30 shadow-sm'
+                        : 'border-slate-200 hover:border-slate-300 text-slate-800 bg-white hover:bg-slate-50/80'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <p className="font-black text-base sm:text-xl tracking-tight leading-tight text-slate-900">
+                        {item.label}
+                      </p>
+                      {isSelected && (
+                        <span className="w-5 h-5 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-black shadow-xs">
+                          ✓
+                        </span>
+                      )}
+                    </div>
+                    <p className={`text-xs sm:text-sm font-bold mt-1 ${isSelected ? 'text-blue-700' : 'text-slate-500'}`}>
+                      {item.sub}
+                    </p>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Special / Other Leave Types */}
+            <div className="grid grid-cols-3 gap-2">
+              {[
                 { type: 'SPECIAL' as LeaveType, label: '경조사 휴가', sub: '특별 유급' },
                 { type: 'SICK' as LeaveType, label: '병가', sub: '진단서 첨부' },
                 { type: 'OFFICIAL' as LeaveType, label: '공가/예비군', sub: '증빙 제출' },
-              ].map((item) => (
-                <button
-                  type="button"
-                  key={item.type}
-                  onClick={() => setLeaveType(item.type)}
-                  className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
-                    leaveType === item.type
-                      ? 'border-blue-600 bg-blue-50 text-blue-900 ring-2 ring-blue-500/20'
-                      : 'border-slate-200 hover:border-slate-300 text-slate-700 bg-white'
-                  }`}
-                >
-                  <p className="font-bold text-xs sm:text-sm">{item.label}</p>
-                  <p className="text-[10px] sm:text-xs text-slate-400 mt-0.5">{item.sub}</p>
-                </button>
-              ))}
+              ].map((item) => {
+                const isSelected = leaveType === item.type;
+                return (
+                  <button
+                    type="button"
+                    key={item.type}
+                    onClick={() => setLeaveType(item.type)}
+                    className={`p-2.5 rounded-xl border-2 text-left transition-all cursor-pointer ${
+                      isSelected
+                        ? 'border-purple-600 bg-purple-50 text-purple-950 ring-2 ring-purple-500/30'
+                        : 'border-slate-200 hover:border-slate-300 text-slate-700 bg-white'
+                    }`}
+                  >
+                    <p className="font-extrabold text-xs sm:text-sm">{item.label}</p>
+                    <p className="text-[11px] text-slate-500 mt-0.5">{item.sub}</p>
+                  </button>
+                );
+              })}
             </div>
           </div>
 

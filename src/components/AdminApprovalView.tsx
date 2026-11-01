@@ -36,6 +36,20 @@ interface AdminApprovalViewProps {
   onBulkCancelApproved?: (requestIds: string[], adminName: string, reason?: string) => void;
   onDeleteRequest?: (requestId: string) => void;
   onBulkDeleteRequests?: (requestIds: string[]) => void;
+  onOpenDirectLeave?: () => void;
+}
+
+function toStandardDate(str?: string): string {
+  if (!str) return '1970-01-01';
+  const clean = String(str).trim();
+  const match = clean.match(/(\d{4})[-./\s]+(\d{1,2})[-./\s]+(\d{1,2})/);
+  if (match) {
+    const y = match[1];
+    const m = match[2].padStart(2, '0');
+    const d = match[3].padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  return clean.slice(0, 10);
 }
 
 export const AdminApprovalView: React.FC<AdminApprovalViewProps> = ({
@@ -48,6 +62,7 @@ export const AdminApprovalView: React.FC<AdminApprovalViewProps> = ({
   onBulkCancelApproved,
   onDeleteRequest,
   onBulkDeleteRequests,
+  onOpenDirectLeave,
 }) => {
   const [activeTab, setActiveTab] = useState<'PENDING' | 'HISTORY' | 'CANCELLED'>('PENDING');
   const [rejectModalReq, setRejectModalReq] = useState<LeaveRequest | null>(null);
@@ -162,8 +177,8 @@ export const AdminApprovalView: React.FC<AdminApprovalViewProps> = ({
 
       // 4. Date Sort (최신 날짜순 vs 과거 날짜순)
       return [...list].sort((a, b) => {
-        const dateA = a.cancelledAt || a.startDate;
-        const dateB = b.cancelledAt || b.startDate;
+        const dateA = toStandardDate(a.cancelledAt || a.startDate);
+        const dateB = toStandardDate(b.cancelledAt || b.startDate);
         if (historySortOrder === 'DESC') {
           return dateB.localeCompare(dateA);
         } else {
@@ -203,8 +218,8 @@ export const AdminApprovalView: React.FC<AdminApprovalViewProps> = ({
 
     // 5. Date Sort (최신 날짜순 vs 과거 날짜순)
     return [...list].sort((a, b) => {
-      const dateA = a.startDate;
-      const dateB = b.startDate;
+      const dateA = toStandardDate(a.startDate);
+      const dateB = toStandardDate(b.startDate);
       if (historySortOrder === 'DESC') {
         return dateB.localeCompare(dateA);
       } else {
@@ -373,12 +388,25 @@ export const AdminApprovalView: React.FC<AdminApprovalViewProps> = ({
         </div>
 
         {/* Action / Count */}
-        <div className="flex items-center space-x-3 w-full md:w-auto">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3 w-full md:w-auto">
+          {onOpenDirectLeave && (
+            <button
+              id="admin-direct-leave-btn"
+              type="button"
+              onClick={onOpenDirectLeave}
+              className="w-full sm:w-auto px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white text-xs sm:text-sm font-black rounded-xl shadow-xs flex items-center justify-center space-x-1.5 transition-all cursor-pointer min-h-[44px] active:scale-95"
+              title="직원이 신청 누락한 연차/반차를 관리자가 직접 등록합니다"
+            >
+              <UserCheck className="w-4 h-4" />
+              <span>➕ 직원 연차 대리 등록</span>
+            </button>
+          )}
+
           {pendingRequests.length > 0 && (
             <button
               id="approve-all-btn"
               onClick={handleApproveAll}
-              className="w-full md:w-auto px-4 py-2.5 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white text-xs font-bold rounded-xl shadow-xs flex items-center justify-center space-x-1.5 transition-colors cursor-pointer min-h-[44px]"
+              className="w-full sm:w-auto px-4 py-2.5 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white text-xs font-bold rounded-xl shadow-xs flex items-center justify-center space-x-1.5 transition-colors cursor-pointer min-h-[44px]"
             >
               <CheckCircle2 className="w-4 h-4" />
               <span>대기 전체 일괄 승인 ({pendingRequests.length}건)</span>

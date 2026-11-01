@@ -13,7 +13,8 @@ import {
   LogOut,
   LayoutDashboard,
   UserCheck,
-  RefreshCw
+  RefreshCw,
+  Key
 } from 'lucide-react';
 
 interface NavbarProps {
@@ -25,6 +26,7 @@ interface NavbarProps {
   onResetData: () => void;
   onManualSync?: () => void;
   isSyncing?: boolean;
+  onOpenPasswordChange?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -36,6 +38,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onResetData,
   onManualSync,
   isSyncing,
+  onOpenPasswordChange,
 }) => {
   const isAdmin = currentEmployee.role === 'ADMIN';
 
@@ -100,15 +103,27 @@ export const Navbar: React.FC<NavbarProps> = ({
               </div>
             </div>
 
-            {/* Prominent, touch-friendly Logout Button for 50-60대 */}
-            <button
-              id="mobile-logout-btn"
-              onClick={onLogout}
-              className="flex items-center space-x-1.5 px-3.5 py-1.5 bg-rose-50 hover:bg-rose-100 active:bg-rose-200 text-rose-700 border border-rose-200 rounded-xl text-xs font-bold transition-all shadow-2xs cursor-pointer active:scale-95"
-            >
-              <LogOut className="w-4 h-4 text-rose-600" />
-              <span>로그아웃</span>
-            </button>
+            {/* Mobile Actions: Password Change (Admin only) & Touch-friendly Logout */}
+            <div className="flex items-center space-x-1.5">
+              {isAdmin && onOpenPasswordChange && (
+                <button
+                  onClick={onOpenPasswordChange}
+                  className="flex items-center space-x-1 px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 rounded-xl text-xs font-bold transition-all shadow-2xs cursor-pointer active:scale-95"
+                  title="관리자 비밀번호 변경"
+                >
+                  <Key className="w-3.5 h-3.5 text-slate-500" />
+                  <span>비밀번호</span>
+                </button>
+              )}
+              <button
+                id="mobile-logout-btn"
+                onClick={onLogout}
+                className="flex items-center space-x-1 px-3 py-1.5 bg-rose-50 hover:bg-rose-100 active:bg-rose-200 text-rose-700 border border-rose-200 rounded-xl text-xs font-bold transition-all shadow-2xs cursor-pointer active:scale-95"
+              >
+                <LogOut className="w-4 h-4 text-rose-600" />
+                <span>로그아웃</span>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -185,11 +200,23 @@ export const Navbar: React.FC<NavbarProps> = ({
                 <p className="text-[10px] text-slate-500">{currentEmployee.position}</p>
               </div>
 
+              {/* Password Change Button (Admin only) */}
+              {isAdmin && onOpenPasswordChange && (
+                <button
+                  onClick={onOpenPasswordChange}
+                  className="ml-1 p-1.5 text-slate-600 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors flex items-center space-x-1 text-xs font-semibold cursor-pointer border border-slate-200"
+                  title="관리자 비밀번호 변경"
+                >
+                  <Key className="w-3.5 h-3.5 text-slate-500" />
+                  <span className="hidden lg:inline">비밀번호 변경</span>
+                </button>
+              )}
+
               {/* Logout Button */}
               <button
                 id="logout-btn"
                 onClick={onLogout}
-                className="ml-1 sm:ml-2 p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors flex items-center space-x-1 text-xs font-semibold cursor-pointer"
+                className="ml-1 sm:ml-1.5 p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors flex items-center space-x-1 text-xs font-semibold cursor-pointer"
                 title="로그아웃"
               >
                 <LogOut className="w-4 h-4" />
@@ -216,7 +243,7 @@ export const Navbar: React.FC<NavbarProps> = ({
         {/* Tab Navigation - Filtered by Role */}
         <nav className="flex space-x-1 sm:space-x-2 border-t border-slate-100 pt-1 -mb-px overflow-x-auto no-scrollbar touch-pan-x">
           {isAdmin ? (
-            /* ADMIN TABS - Priority 1: 관리자 결재 승인 */
+            /* ADMIN TABS */
             <>
               <button
                 id="tab-approval"
@@ -273,6 +300,35 @@ export const Navbar: React.FC<NavbarProps> = ({
               >
                 <Users className="w-4 h-4 flex-shrink-0" />
                 <span>전사 직원 관리</span>
+              </button>
+
+              <span className="w-px h-6 bg-slate-200 self-center hidden sm:block"></span>
+
+              <button
+                id="tab-admin-my-dashboard"
+                onClick={() => onChangeTab('dashboard')}
+                className={`flex items-center space-x-2 py-3 px-3.5 text-xs sm:text-sm font-bold border-b-2 transition-colors whitespace-nowrap cursor-pointer min-h-[44px] ${
+                  activeTab === 'dashboard'
+                    ? 'border-emerald-600 text-emerald-700 bg-emerald-50 rounded-t-lg sm:rounded-none font-black'
+                    : 'border-transparent text-emerald-800 bg-emerald-50/60 hover:bg-emerald-100 hover:border-emerald-400'
+                }`}
+                title="관리자 본인(유정)의 연차를 신청하거나 잔여 연차 현황을 확인합니다"
+              >
+                <User className="w-4 h-4 flex-shrink-0 text-emerald-600" />
+                <span>👤 내 연차 신청/현황 ({currentEmployee.name})</span>
+              </button>
+
+              <button
+                id="tab-admin-my-yearly"
+                onClick={() => onChangeTab('yearly')}
+                className={`flex items-center space-x-2 py-3 px-3.5 text-xs sm:text-sm font-bold border-b-2 transition-colors whitespace-nowrap cursor-pointer min-h-[44px] ${
+                  activeTab === 'yearly'
+                    ? 'border-blue-600 text-blue-600 bg-blue-50/40 sm:bg-transparent rounded-t-lg sm:rounded-none'
+                    : 'border-transparent text-slate-600 hover:text-slate-900 hover:border-slate-300'
+                }`}
+              >
+                <FileText className="w-4 h-4 flex-shrink-0" />
+                <span>내 1년 연차대장</span>
               </button>
             </>
           ) : (

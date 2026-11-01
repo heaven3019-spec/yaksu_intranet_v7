@@ -33,7 +33,8 @@ import {
   ArrowUpDown,
   ArrowUp,
   ArrowDown,
-  Sparkles
+  Sparkles,
+  Key
 } from 'lucide-react';
 
 interface AdminEmployeeListProps {
@@ -45,6 +46,7 @@ interface AdminEmployeeListProps {
   onRetireEmployee: (empId: string, retiredDate: string) => void;
   onRestoreEmployee: (empId: string) => void;
   onSelectEmployeeForYearly: (emp: Employee) => void;
+  onOpenPasswordChange?: (emp: Employee) => void;
   initialTab?: 'ACTIVE' | 'RETIRED';
 }
 
@@ -60,6 +62,7 @@ export const AdminEmployeeList: React.FC<AdminEmployeeListProps> = ({
   onRetireEmployee,
   onRestoreEmployee,
   onSelectEmployeeForYearly,
+  onOpenPasswordChange,
   initialTab = 'ACTIVE',
 }) => {
   const [currentTab, setCurrentTab] = useState<'ACTIVE' | 'RETIRED'>(initialTab);
@@ -484,6 +487,9 @@ export const AdminEmployeeList: React.FC<AdminEmployeeListProps> = ({
                             <span className="text-[10px] bg-slate-100 text-slate-700 px-1.5 py-0.2 rounded font-mono border border-slate-200">
                               ID: <strong className="text-blue-700">{emp.loginId}</strong>
                             </span>
+                            <span className="text-[10px] bg-amber-50 text-amber-900 px-1.5 py-0.2 rounded font-mono border border-amber-200">
+                              PW: <strong className="text-amber-800">{emp.password || '1234'}</strong>
+                            </span>
                             {emp.role === 'ADMIN' && (
                               <span className="text-[9px] bg-rose-100 text-rose-700 px-1.5 py-0.2 rounded font-bold">
                                 관리자
@@ -589,6 +595,17 @@ export const AdminEmployeeList: React.FC<AdminEmployeeListProps> = ({
                           <Edit3 className="w-3 h-3" />
                           <span>수정</span>
                         </button>
+
+                        {onOpenPasswordChange && (
+                          <button
+                            onClick={() => onOpenPasswordChange(emp)}
+                            className="px-2 py-1 text-[11px] font-semibold bg-amber-50 hover:bg-amber-100 text-amber-900 rounded-lg border border-amber-200 transition-colors flex items-center space-x-1 cursor-pointer"
+                            title="비밀번호 즉시 변경"
+                          >
+                            <Key className="w-3 h-3 text-amber-600" />
+                            <span>비번</span>
+                          </button>
+                        )}
 
                         {emp.status === 'RETIRED' ? (
                           <button

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Employee, LeaveCycleInfo, LeaveRequest } from '../types';
 import { 
   getLeaveTypeBadgeColor, 
@@ -20,6 +20,9 @@ import {
   CalendarCheck2,
   ArrowLeft,
   ArrowRight,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
   Info
 } from 'lucide-react';
 import { LeaveDetailModal } from './LeaveDetailModal';
@@ -84,26 +87,63 @@ export const YearlyLeaveView: React.FC<YearlyLeaveViewProps> = ({
     }
   }, [initialStatusFilter]);
 
+  const [sortOrder, setSortOrder] = useState<'DESC' | 'ASC'>('DESC');
+
+  // Normalize date string (YYYY-MM-DD) for accurate sorting & range comparisons
+  const toStandardDate = (str?: string): string => {
+    if (!str) return '1970-01-01';
+    const clean = String(str).trim();
+    const match = clean.match(/(\d{4})[-./\s]+(\d{1,2})[-./\s]+(\d{1,2})/);
+    if (match) {
+      const y = match[1];
+      const m = match[2].padStart(2, '0');
+      const d = match[3].padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    }
+    return clean.slice(0, 10);
+  };
+
   const activeCycle = cycles.find((c) => c.cycleIndex === selectedCycleIndex) || currentCycleItem;
   const isAdmin = currentUserRole === 'ADMIN';
 
   // All requests belonging to this employee AND this 1-year cycle
-  const allCycleRequests = requests.filter((r) => {
-    if (r.employeeId !== selectedEmployee.id) return false;
-    if (!activeCycle) return false;
-    return r.startDate >= activeCycle.startDate && r.startDate <= activeCycle.endDate;
-  });
+  const allCycleRequests = useMemo(() => {
+    if (!activeCycle) return [];
+    const cycleStart = toStandardDate(activeCycle.startDate);
+    const cycleEnd = toStandardDate(activeCycle.endDate);
+
+    return requests.filter((r) => {
+      if (r.employeeId !== selectedEmployee.id) return false;
+      const stdStart = toStandardDate(r.startDate);
+      return stdStart >= cycleStart && stdStart <= cycleEnd;
+    });
+  }, [requests, selectedEmployee.id, activeCycle]);
 
   const totalCycleCount = allCycleRequests.length;
   const approvedCycleCount = allCycleRequests.filter((r) => r.status === 'APPROVED').length;
   const pendingCycleCount = allCycleRequests.filter((r) => r.status === 'PENDING').length;
 
   // Filtered requests according to statusFilter
-  const cycleRequests = allCycleRequests.filter((r) => {
-    if (statusFilter === 'APPROVED') return r.status === 'APPROVED';
-    if (statusFilter === 'PENDING') return r.status === 'PENDING';
-    return true;
-  });
+  const cycleRequests = useMemo(() => {
+    return allCycleRequests.filter((r) => {
+      if (statusFilter === 'APPROVED') return r.status === 'APPROVED';
+      if (statusFilter === 'PENDING') return r.status === 'PENDING';
+      return true;
+    });
+  }, [allCycleRequests, statusFilter]);
+
+  // Sorted requests by date (오름차순 / 내림차순)
+  const sortedCycleRequests = useMemo(() => {
+    return [...cycleRequests].sort((a, b) => {
+      const dateA = toStandardDate(a.startDate);
+      const dateB = toStandardDate(b.startDate);
+      if (sortOrder === 'DESC') {
+        return dateB.localeCompare(dateA);
+      } else {
+        return dateA.localeCompare(dateB);
+      }
+    });
+  }, [cycleRequests, sortOrder]);
 
   // Calculate 12-month usage breakdown for this cycle
   const monthlyUsage: { [key: string]: number } = {};
@@ -118,9 +158,13 @@ export const YearlyLeaveView: React.FC<YearlyLeaveViewProps> = ({
 
     requests
       .filter((r) => r.employeeId === selectedEmployee.id && r.status === 'APPROVED')
-      .filter((r) => r.startDate >= activeCycle.startDate && r.startDate <= activeCycle.endDate)
+      .filter((r) => {
+        const std = toStandardDate(r.startDate);
+        return std >= toStandardDate(activeCycle.startDate) && std <= toStandardDate(activeCycle.endDate);
+      })
       .forEach((r) => {
-        const monthKey = r.startDate.slice(0, 7).replace('-', '.');
+        const std = toStandardDate(r.startDate);
+        const monthKey = std.slice(0, 7).replace('-', '.');
         if (monthlyUsage[monthKey] !== undefined) {
           monthlyUsage[monthKey] += r.daysCount;
         } else {
@@ -133,7 +177,7 @@ export const YearlyLeaveView: React.FC<YearlyLeaveViewProps> = ({
   const handleExportCSV = () => {
     if (!activeCycle) return;
     const headers = ['번호', '직원명', '직급', '휴가구분', '시작일', '종료일', '사용일수', '사유', '결재상태', '신청일시', '승인자'];
-    const rows = cycleRequests.map((r, idx) => [
+    const rows = sortedCycleRequests.map((r, idx) => [
       idx + 1,
       r.employeeName,
       r.position,
@@ -437,36 +481,49 @@ export const YearlyLeaveView: React.FC<YearlyLeaveViewProps> = ({
             </p>
           </div>
 
-          {/* Filter Tabs */}
-          <div className="flex items-center space-x-1 bg-slate-100 p-1 rounded-xl text-xs font-medium self-start sm:self-auto">
+          {/* Controls: Filter Tabs + Date Sort Toggle */}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center space-x-1 bg-slate-100 p-1 rounded-xl text-xs font-medium">
+              <button
+                onClick={() => setStatusFilter('ALL')}
+                className={`px-3 py-1.5 rounded-lg transition-colors cursor-pointer ${
+                  statusFilter === 'ALL' ? 'bg-white text-slate-900 shadow-2xs font-bold' : 'text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                전체 ({totalCycleCount})
+              </button>
+              <button
+                onClick={() => setStatusFilter('APPROVED')}
+                className={`px-3 py-1.5 rounded-lg transition-colors cursor-pointer ${
+                  statusFilter === 'APPROVED' ? 'bg-blue-600 text-white shadow-2xs font-bold' : 'text-slate-600 hover:text-blue-700 font-semibold'
+                }`}
+              >
+                사용한 연차 ({approvedCycleCount})
+              </button>
+              <button
+                onClick={() => setStatusFilter('PENDING')}
+                className={`px-3 py-1.5 rounded-lg transition-colors cursor-pointer ${
+                  statusFilter === 'PENDING' ? 'bg-amber-600 text-white shadow-2xs font-bold' : 'text-slate-600 hover:text-amber-700 font-semibold'
+                }`}
+              >
+                결제 대기 ({pendingCycleCount})
+              </button>
+            </div>
+
+            {/* Date Sort Toggle Button (오름차순 / 내림차순) */}
             <button
-              onClick={() => setStatusFilter('ALL')}
-              className={`px-3 py-1.5 rounded-lg transition-colors cursor-pointer ${
-                statusFilter === 'ALL' ? 'bg-white text-slate-900 shadow-2xs font-bold' : 'text-slate-500 hover:text-slate-800'
-              }`}
+              type="button"
+              onClick={() => setSortOrder((prev) => (prev === 'DESC' ? 'ASC' : 'DESC'))}
+              className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-800 text-xs font-bold rounded-xl border-2 border-slate-200 hover:border-blue-400 flex items-center space-x-1.5 transition-all shadow-2xs cursor-pointer active:scale-95"
+              title="사용일자 기준 최신순 / 과거순 정렬 전환"
             >
-              전체 ({totalCycleCount})
-            </button>
-            <button
-              onClick={() => setStatusFilter('APPROVED')}
-              className={`px-3 py-1.5 rounded-lg transition-colors cursor-pointer ${
-                statusFilter === 'APPROVED' ? 'bg-blue-600 text-white shadow-2xs font-bold' : 'text-slate-600 hover:text-blue-700 font-semibold'
-              }`}
-            >
-              사용한 연차 ({approvedCycleCount})
-            </button>
-            <button
-              onClick={() => setStatusFilter('PENDING')}
-              className={`px-3 py-1.5 rounded-lg transition-colors cursor-pointer ${
-                statusFilter === 'PENDING' ? 'bg-amber-600 text-white shadow-2xs font-bold' : 'text-slate-600 hover:text-amber-700 font-semibold'
-              }`}
-            >
-              결제 대기 ({pendingCycleCount})
+              <ArrowUpDown className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+              <span>{sortOrder === 'DESC' ? '날짜: 최신순 ⬇️' : '날짜: 과거순 ⬆️'}</span>
             </button>
           </div>
         </div>
 
-        {cycleRequests.length === 0 ? (
+        {sortedCycleRequests.length === 0 ? (
           <div className="p-12 text-center">
             <Calendar className="w-10 h-10 text-slate-300 mx-auto mb-2" />
             <p className="text-sm font-medium text-slate-600">해당 1년 주기에 등록된 연차 사용 내역이 없습니다.</p>
@@ -480,12 +537,17 @@ export const YearlyLeaveView: React.FC<YearlyLeaveViewProps> = ({
                 <Info className="w-4 h-4 text-blue-600 shrink-0" />
                 <span>💡 항목을 터치하시면 큰 글씨로 상세 내역을 보실 수 있습니다.</span>
               </span>
-              <span className="hidden sm:inline text-slate-500 font-medium">총 {cycleRequests.length}건</span>
+              <div className="flex items-center space-x-2">
+                <span className="text-slate-600 font-bold bg-white px-2 py-0.5 rounded border border-blue-200">
+                  {sortOrder === 'DESC' ? '최신 사용일순 정렬됨' : '과거 사용일순 정렬됨'}
+                </span>
+                <span className="text-slate-500 font-medium">총 {sortedCycleRequests.length}건</span>
+              </div>
             </div>
 
             {/* 1. Mobile Optimized Card View (block md:hidden) - 가로 스크롤 없이 시원한 모바일 전용 카드 */}
             <div className="block md:hidden p-3.5 space-y-3 bg-slate-50/50">
-              {cycleRequests.map((req, idx) => {
+              {sortedCycleRequests.map((req, idx) => {
                 const isApproved = req.status === 'APPROVED';
                 const isPending = req.status === 'PENDING';
                 const isRejected = req.status === 'REJECTED';
@@ -586,7 +648,7 @@ export const YearlyLeaveView: React.FC<YearlyLeaveViewProps> = ({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {cycleRequests.map((req, idx) => {
+                  {sortedCycleRequests.map((req, idx) => {
                     const isApproved = req.status === 'APPROVED';
                     const isPending = req.status === 'PENDING';
 

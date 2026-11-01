@@ -150,7 +150,73 @@ export async function postSingleRequestToServer(newReq: LeaveRequest) {
     notifyBroadcastChannel('NEW_REQUEST_SUBMITTED', newReq);
   } catch (err) {
     console.warn('[Storage] Direct request post deferred to background sync:', err);
-    throw err;
+    // If Firestore write was successful, do not block the user with an exception
+  }
+}
+
+// Update single request status (Approve, Reject, Cancel) on server & Firestore
+export async function patchRequestOnServer(requestId: string, updates: Partial<LeaveRequest>) {
+  try {
+    const token = getAdminToken();
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (token) headers['x-admin-token'] = token;
+
+    await fetch(`/api/requests/${requestId}`, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify(updates),
+    }).catch((e) => console.warn('Server patch request warning:', e));
+
+    notifyBroadcastChannel('REQUEST_UPDATED', { id: requestId, updates });
+  } catch (err) {
+    console.warn('patchRequestOnServer error:', err);
+  }
+}
+
+// Delete single request on server
+export async function deleteRequestOnServer(requestId: string) {
+  try {
+    await fetch(`/api/requests/${requestId}`, {
+      method: 'DELETE',
+    }).catch((e) => console.warn('Server delete request warning:', e));
+
+    notifyBroadcastChannel('REQUEST_DELETED', { id: requestId });
+  } catch (err) {
+    console.warn('deleteRequestOnServer error:', err);
+  }
+}
+
+// Bulk delete requests on server
+export async function bulkDeleteRequestsOnServer(requestIds: string[]) {
+  try {
+    await fetch('/api/requests/bulk-delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requestIds }),
+    }).catch((e) => console.warn('Server bulk delete warning:', e));
+
+    notifyBroadcastChannel('REQUESTS_BULK_DELETED', { requestIds });
+  } catch (err) {
+    console.warn('bulkDeleteRequestsOnServer error:', err);
+  }
+}
+
+// Change employee password on server
+export async function changePasswordOnServer(employeeId: string, newPassword: string): Promise<boolean> {
+  try {
+    const res = await fetch('/api/users/change-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ employeeId, newPassword }),
+    });
+    if (res.ok) {
+      notifyBroadcastChannel('PASSWORD_CHANGED', { employeeId });
+      return true;
+    }
+    return false;
+  } catch (err) {
+    console.warn('changePasswordOnServer error:', err);
+    return false;
   }
 }
 

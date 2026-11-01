@@ -11,6 +11,10 @@ import {
   fetchServerData,
   postSingleRequestToServer,
   postSingleEmployeeToServer,
+  patchRequestOnServer,
+  deleteRequestOnServer,
+  bulkDeleteRequestsOnServer,
+  changePasswordOnServer,
   subscribeToBroadcastChannel,
   syncToServer,
   runSecurityAuditAndClean,
@@ -42,6 +46,8 @@ import { CompanyCalendarView } from './components/CompanyCalendarView';
 import { LeaveRequestModal } from './components/LeaveRequestModal';
 import { LeaveDocumentPrintModal } from './components/LeaveDocumentPrintModal';
 import { ExcelImportModal } from './components/ExcelImportModal';
+import { AdminDirectLeaveModal } from './components/AdminDirectLeaveModal';
+import { PasswordChangeModal } from './components/PasswordChangeModal';
 import { CheckCircle2, AlertCircle, X, FileText } from 'lucide-react';
 
 export default function App() {
@@ -55,6 +61,9 @@ export default function App() {
   const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
   const [isExcelImportModalOpen, setIsExcelImportModalOpen] = useState(false);
+  const [isAdminDirectLeaveOpen, setIsAdminDirectLeaveOpen] = useState(false);
+  const [isPasswordChangeOpen, setIsPasswordChangeOpen] = useState(false);
+  const [passwordChangeEmp, setPasswordChangeEmp] = useState<Employee | null>(null);
   const [printTargetRequest, setPrintTargetRequest] = useState<LeaveRequest | undefined>(undefined);
 
   // Yearly view targeted employee and cycle
@@ -522,9 +531,7 @@ export default function App() {
   // Admin guard: if admin is on removed tabs, redirect to admin-overview
   if (isAdmin && (
     activeTab === 'calendar' || 
-    activeTab === 'dashboard' || 
-    activeTab === 'retired-employees' ||
-    activeTab === 'yearly'
+    activeTab === 'retired-employees'
   )) {
     setActiveTab('admin-overview');
   }
@@ -586,14 +593,45 @@ export default function App() {
     }
   };
 
+  // Admin Direct / Proxy Leave Registration (Requirement 8: 누락분 관리자 대리 등록)
+  const handleSubmitDirectLeave = async (data: Omit<LeaveRequest, 'id' | 'requestedAt'>) => {
+    const targetEmp = employees.find((e) => e.id === data.employeeId);
+    if (!targetEmp) {
+      showToast('직원 정보를 찾을 수 없습니다.', 'error');
+      return;
+    }
+
+    const nowIso = new Date().toISOString();
+    const newReq: LeaveRequest = {
+      ...data,
+      employeeName: targetEmp.name,
+      id: `req-${Date.now()}`,
+      requestedAt: nowIso,
+      reviewedAt: data.status === 'APPROVED' ? nowIso : undefined,
+      reviewedBy: data.status === 'APPROVED' ? (data.reviewedBy || currentEmployee.name) : undefined,
+    };
+
+    const newReqs = [newReq, ...requests];
+    updateRequests(newReqs);
+
+    try {
+      await postSingleRequestToServer(newReq);
+      showToast(`'${targetEmp.name}' 직원의 연차(${newReq.daysCount}일)가 관리자 직권으로 ${newReq.status === 'APPROVED' ? '승인 등록' : '대기 등록'}되었습니다.`, 'success');
+    } catch (err: any) {
+      console.error('Direct leave submit error:', err);
+      showToast(err?.message || '대리 연차 등록 중 오류가 발생했습니다.', 'error');
+    }
+  };
+
   // Admin Approve Request
   const handleApproveRequest = async (requestId: string, adminName: string) => {
     const target = requests.find((r) => r.id === requestId);
+    const reviewedAt = new Date().toISOString();
     const updatedReq: LeaveRequest | undefined = target
       ? {
           ...target,
           status: 'APPROVED' as const,
-          reviewedAt: new Date().toISOString(),
+          reviewedAt,
           reviewedBy: adminName,
         }
       : undefined;
@@ -607,6 +645,11 @@ export default function App() {
       } catch (err) {
         console.error('Error updating leave request in Firestore:', err);
       }
+      await patchRequestOnServer(requestId, {
+        status: 'APPROVED',
+        reviewedAt,
+        reviewedBy: adminName,
+      });
     }
     showToast(`연차 신청 건이 성공적으로 결재 승인되었습니다.`, 'success');
   };
@@ -614,11 +657,12 @@ export default function App() {
   // Admin Reject Request
   const handleRejectRequest = async (requestId: string, adminName: string, reason: string) => {
     const target = requests.find((r) => r.id === requestId);
+    const reviewedAt = new Date().toISOString();
     const updatedReq: LeaveRequest | undefined = target
       ? {
           ...target,
           status: 'REJECTED' as const,
-          reviewedAt: new Date().toISOString(),
+          reviewedAt,
           reviewedBy: adminName,
           rejectReason: reason,
         }
@@ -633,6 +677,12 @@ export default function App() {
       } catch (err) {
         console.error('Error updating leave request in Firestore:', err);
       }
+      await patchRequestOnServer(requestId, {
+        status: 'REJECTED',
+        reviewedAt,
+        reviewedBy: adminName,
+        rejectReason: reason,
+      });
     }
     showToast(`연차 신청 건이 반려 처리되었습니다.`, 'info');
   };
@@ -642,12 +692,13 @@ export default function App() {
     const target = requests.find((r) => r.id === requestId);
     if (!target) return;
     const nowIso = new Date().toISOString();
+    const cancelReason = reason || '관리자 연차 승인 취소';
     const updatedReq: LeaveRequest = {
       ...target,
       status: 'CANCELLED',
       reviewedBy: adminName,
       cancelledAt: nowIso,
-      cancelReason: reason || '관리자 연차 승인 취소',
+      cancelReason,
     };
 
     const updated = requests.map((r) => (r.id === requestId ? updatedReq : r));
@@ -658,6 +709,12 @@ export default function App() {
     } catch (err) {
       console.error('Error cancelling approved leave request in Firestore:', err);
     }
+    await patchRequestOnServer(requestId, {
+      status: 'CANCELLED',
+      reviewedBy: adminName,
+      cancelledAt: nowIso,
+      cancelReason,
+    });
     showToast(`승인된 연차가 취소되었습니다. (연차 잔여일수 자동 복구)`, 'info');
   };
 
@@ -665,6 +722,7 @@ export default function App() {
   const handleBulkCancelApproved = async (requestIds: string[], adminName: string, reason?: string) => {
     if (!requestIds || requestIds.length === 0) return;
     const nowIso = new Date().toISOString();
+    const cancelReason = reason || '관리자 일괄 승인 취소';
     const updatedList: LeaveRequest[] = [];
     const updated = requests.map((r) => {
       if (requestIds.includes(r.id)) {
@@ -673,7 +731,7 @@ export default function App() {
           status: 'CANCELLED',
           reviewedBy: adminName,
           cancelledAt: nowIso,
-          cancelReason: reason || '관리자 일괄 승인 취소',
+          cancelReason,
         };
         updatedList.push(item);
         return item;
@@ -689,6 +747,12 @@ export default function App() {
       } catch (err) {
         console.error('Error bulk cancelling leave request in Firestore:', err);
       }
+      await patchRequestOnServer(item.id, {
+        status: 'CANCELLED',
+        reviewedBy: adminName,
+        cancelledAt: nowIso,
+        cancelReason,
+      });
     }
     showToast(`선택된 ${requestIds.length}건이 일괄 승인 취소되었습니다.`, 'info');
   };
@@ -703,6 +767,7 @@ export default function App() {
     } catch (err) {
       console.error('Error deleting leave request from Firestore:', err);
     }
+    await deleteRequestOnServer(requestId);
     showToast('취소 내역이 영구 삭제되었습니다.', 'info');
   };
 
@@ -719,7 +784,8 @@ export default function App() {
         console.error('Error bulk deleting leave requests from Firestore:', err);
       }
     }
-    showToast(`${requestIds.length}건의 취소 내역이 영구 삭제되었습니다.`, 'info');
+    await bulkDeleteRequestsOnServer(requestIds);
+    showToast(`${requestIds.length}건의 내역이 영구 삭제되었습니다.`, 'info');
   };
 
   // Cancel Request (by Employee)
@@ -741,6 +807,7 @@ export default function App() {
       } catch (err) {
         console.error('Error cancelling leave request in Firestore:', err);
       }
+      await patchRequestOnServer(requestId, { status: 'CANCELLED' });
     }
     showToast(`연차 신청이 취소되었습니다.`, 'info');
   };
@@ -768,6 +835,9 @@ export default function App() {
     updateEmployees(newEmps);
     try {
       await postSingleEmployeeToServer(updatedEmp);
+      if (updatedEmp.password) {
+        await changePasswordOnServer(updatedEmp.id, updatedEmp.password).catch(() => {});
+      }
       showToast(`'${updatedEmp.name}' 직원 정보가 클라우드 및 시스템 데이터베이스에 성공적으로 수정되었습니다.`, 'success');
     } catch (err) {
       console.error('Update employee error:', err);
@@ -881,6 +951,10 @@ export default function App() {
         onResetData={handleResetData}
         onManualSync={handleManualSync}
         isSyncing={isSyncing}
+        onOpenPasswordChange={isAdmin ? () => {
+          setPasswordChangeEmp(currentEmployee);
+          setIsPasswordChangeOpen(true);
+        } : undefined}
       />
 
       {/* Main Content Area */}
@@ -910,28 +984,32 @@ export default function App() {
           />
         )}
 
-        {/* Tab: 내 연차 현황 & 신청 (Employee personal view) */}
-        {!isAdmin && activeTab === 'dashboard' && (
+        {/* Tab: 내 연차 현황 & 신청 (Employee & Admin personal view) */}
+        {activeTab === 'dashboard' && (
           <EmployeeDashboard
             employee={currentEmployee}
             currentCycle={currentEmpActiveCycle}
             allCycles={currentEmpCycles}
-            requests={userVisibleRequests}
+            requests={requests.filter((r) => r.employeeId === currentEmployee.id)}
             onOpenRequestModal={() => setIsRequestModalOpen(true)}
             onCancelRequest={handleCancelRequest}
             onViewYearlyDetail={handleViewYearlyDetail}
             onOpenPrintModal={handleOpenPrintModal}
+            onOpenPasswordChange={isAdmin ? () => {
+              setPasswordChangeEmp(currentEmployee);
+              setIsPasswordChangeOpen(true);
+            } : undefined}
           />
         )}
 
-        {/* Tab: 내 1년 연차대장 조회 (Employee personal view) */}
-        {!isAdmin && activeTab === 'yearly' && (
+        {/* Tab: 내 1년 연차대장 조회 (Employee & Admin view) */}
+        {activeTab === 'yearly' && (
           <YearlyLeaveView
-            employees={[currentEmployee]}
-            selectedEmployee={currentEmployee}
+            employees={isAdmin ? employees : [currentEmployee]}
+            selectedEmployee={yearlyEmployee}
             onSelectEmployee={(emp) => setSelectedYearlyEmployeeId(emp.id)}
             cycles={yearlyEmpCycles}
-            requests={userVisibleRequests}
+            requests={isAdmin ? requests : userVisibleRequests}
             initialCycleIndex={targetedCycleIndex}
             initialStatusFilter={targetedStatusFilter}
             onOpenPrintModal={handleOpenPrintModal}
@@ -952,6 +1030,7 @@ export default function App() {
             onBulkCancelApproved={handleBulkCancelApproved}
             onDeleteRequest={handleDeleteRequest}
             onBulkDeleteRequests={handleBulkDeleteRequests}
+            onOpenDirectLeave={() => setIsAdminDirectLeaveOpen(true)}
           />
         )}
 
@@ -967,6 +1046,10 @@ export default function App() {
             onRestoreEmployee={handleRestoreEmployee}
             onSelectEmployeeForYearly={(emp) => {
               setAdminYearlyModalEmp(emp);
+            }}
+            onOpenPasswordChange={(emp) => {
+              setPasswordChangeEmp(emp);
+              setIsPasswordChangeOpen(true);
             }}
           />
         )}
@@ -1048,6 +1131,35 @@ export default function App() {
           existingEmployees={employees}
           existingRequests={requests}
           onApplyImport={handleApplyExcelImport}
+        />
+      )}
+
+      {/* Admin Direct Leave Registration Modal (Requirement 8) */}
+      {isAdminDirectLeaveOpen && (
+        <AdminDirectLeaveModal
+          isOpen={isAdminDirectLeaveOpen}
+          onClose={() => setIsAdminDirectLeaveOpen(false)}
+          employees={employees}
+          requests={requests}
+          adminName={currentEmployee.name}
+          onSubmit={handleSubmitDirectLeave}
+        />
+      )}
+
+      {/* Password Change Modal (Requirement 4) */}
+      {isPasswordChangeOpen && passwordChangeEmp && (
+        <PasswordChangeModal
+          isOpen={isPasswordChangeOpen}
+          onClose={() => {
+            setIsPasswordChangeOpen(false);
+            setPasswordChangeEmp(null);
+          }}
+          targetEmployee={passwordChangeEmp}
+          onPasswordUpdated={(updatedEmp) => {
+            const newEmps = employees.map((e) => (e.id === updatedEmp.id ? updatedEmp : e));
+            updateEmployees(newEmps);
+            showToast(`'${updatedEmp.name}' 직원의 비밀번호가 성공적으로 변경되었습니다.`, 'success');
+          }}
         />
       )}
 

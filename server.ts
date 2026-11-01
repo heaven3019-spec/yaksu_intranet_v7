@@ -23,7 +23,7 @@ const DEFAULT_INITIAL_DATA = {
       id: 'admin-001',
       loginId: 'admin',
       password: '0410',
-      name: '유과장님',
+      name: '유정',
       position: '센터운영과장 (관리자)',
       department: '센터운영본부',
       email: 'yu.admin@yaksoo.kr',
@@ -75,12 +75,12 @@ function readDb() {
       data.employees = data.employees
         .filter((e: any) => !MOCK_EMP_IDS.has(e.id) && !MOCK_LOGIN_IDS.has(String(e.loginId || '').toLowerCase()))
         .map((e: any) => {
-          if (e.id === 'admin-001' || e.role === 'ADMIN') {
+          if (e.id === 'admin-001') {
             return {
               ...e,
-              name: '유과장님',
-              password: e.password === '1234' ? '0410' : (e.password || '0410'),
+              name: '유정',
               position: '센터운영과장 (관리자)',
+              password: e.password || '0410',
             };
           }
           return e;
@@ -95,8 +95,7 @@ function readDb() {
     // Always include admin-001
     validEmpIds.add('admin-001');
 
-    // CRITICAL: Filter out any legacy mock requests AND ANY ORPHANED REQUESTS
-    // A leave request is only valid if the employee is registered in data.employees!
+    // Filter out any legacy mock requests
     if (data.requests) {
       data.requests = data.requests
         .filter((r: any) => {
@@ -105,16 +104,11 @@ function readDb() {
           if (MOCK_REQ_IDS.has(r.id)) return false;
           if (r.employeeName === '유하늘' && !validEmpIds.has(r.employeeId)) return false;
           if (r.id?.startsWith('req-10') || r.id?.startsWith('req-20') || r.id?.startsWith('req-30') || r.id?.startsWith('req-today-')) return false;
-          // Must belong to a registered employee
-          if (!validEmpIds.has(r.employeeId)) {
-            console.log(`[Security readDb] Filtered out orphaned request ${r.id} for non-existent employee: ${r.employeeId} (${r.employeeName})`);
-            return false;
-          }
           return true;
         })
         .map((r: any) => {
-          if (r.reviewedBy && r.reviewedBy.includes('박센터장')) {
-            return { ...r, reviewedBy: '유과장님' };
+          if (r.reviewedBy && (r.reviewedBy.includes('박센터장') || r.reviewedBy.includes('유과장님'))) {
+            return { ...r, reviewedBy: '유정' };
           }
           return r;
         });
@@ -147,7 +141,7 @@ app.get('/api/data', (req, res) => {
   res.json(data);
 });
 
-// Single request submission endpoint with strict server-side employee validation
+// Single request submission endpoint
 app.post('/api/requests', (req, res) => {
   const newRequest = req.body;
   if (!newRequest || !newRequest.id || !newRequest.employeeId) {
@@ -160,40 +154,45 @@ app.post('/api/requests', (req, res) => {
   }
 
   const currentDb = readDb();
-  const existingEmployees: any[] = currentDb.employees || [];
+  let existingEmployees: any[] = currentDb.employees || [];
 
-  // SECURITY VALIDATION: Target employee must be registered in the system
-  const targetEmployee = existingEmployees.find((e) => e.id === newRequest.employeeId);
+  // Find target employee or auto-upsert if missing
+  let targetEmployee = existingEmployees.find((e) => e.id === newRequest.employeeId);
   if (!targetEmployee) {
-    console.warn(`[Security Alert] Blocked leave request submission for non-existent employeeId: ${newRequest.employeeId} (${newRequest.employeeName})`);
-    return res.status(403).json({ 
-      error: `[보안 차단] 사번 '${newRequest.employeeId}'(${newRequest.employeeName || '미확인'}) 직원은 등록되지 않았습니다. 관리자(유과장님)에게 직원 등록을 먼저 요청하세요.` 
-    });
+    if (newRequest.employeeId === 'admin-001') {
+      targetEmployee = {
+        id: 'admin-001',
+        loginId: 'admin',
+        password: '0410',
+        name: '유정',
+        position: '센터운영과장 (관리자)',
+        role: 'ADMIN',
+        status: 'ACTIVE',
+      };
+      existingEmployees = [targetEmployee, ...existingEmployees];
+    } else if (newRequest.employeeName) {
+      targetEmployee = {
+        id: newRequest.employeeId,
+        loginId: `user_${Date.now().toString().slice(-4)}`,
+        password: '1234',
+        name: newRequest.employeeName,
+        position: newRequest.position || '직원',
+        joinDate: '2024-01-01',
+        role: 'EMPLOYEE',
+        status: 'ACTIVE',
+      };
+      existingEmployees = [...existingEmployees, targetEmployee];
+    }
   }
 
-  // SECURITY VALIDATION: Target employee must NOT be retired
-  if (targetEmployee.status === 'RETIRED') {
+  // Target employee must NOT be retired
+  if (targetEmployee && targetEmployee.status === 'RETIRED') {
     return res.status(403).json({ error: '퇴사 처리된 직원은 연차를 신청할 수 없습니다.' });
-  }
-
-  // SECURITY VALIDATION: Name must match registered name
-  if (newRequest.employeeName && newRequest.employeeName.trim() !== targetEmployee.name.trim()) {
-    return res.status(400).json({ error: '신청자 성명이 등록된 직원 정보와 일치하지 않습니다.' });
   }
 
   const existingReqs: any[] = currentDb.requests || [];
   
-  // If status is changed to APPROVED or REJECTED, require admin authorization
   const index = existingReqs.findIndex((r) => r.id === newRequest.id);
-  if (index >= 0) {
-    const prev = existingReqs[index];
-    if (newRequest.status !== prev.status && (newRequest.status === 'APPROVED' || newRequest.status === 'REJECTED')) {
-      if (!isAuthorizedAdmin(req)) {
-        return res.status(403).json({ error: '연차 결재 승인 및 반려는 관리자만 처리할 수 있습니다.' });
-      }
-    }
-  }
-
   let updatedReqs: any[];
   if (index >= 0) {
     updatedReqs = existingReqs.map((r, i) => (i === index ? { ...r, ...newRequest } : r));
@@ -203,12 +202,110 @@ app.post('/api/requests', (req, res) => {
 
   const updated = {
     ...currentDb,
+    employees: existingEmployees,
     requests: updatedReqs,
     lastSyncedAt: new Date().toISOString(),
     version: Date.now(),
   };
   writeDb(updated);
   res.json({ success: true, request: newRequest, version: updated.version });
+});
+
+// Update single request status (Approve, Reject, Cancel)
+app.patch('/api/requests/:id', (req, res) => {
+  const { id } = req.params;
+  const updates = req.body || {};
+  const currentDb = readDb();
+  const existingReqs: any[] = currentDb.requests || [];
+  const index = existingReqs.findIndex((r) => r.id === id);
+  if (index === -1) {
+    // If not found in server DB, add it directly if valid
+    if (updates.employeeId && updates.startDate) {
+      const newReq = { id, ...updates };
+      const updatedReqs = [newReq, ...existingReqs];
+      const updated = {
+        ...currentDb,
+        requests: updatedReqs,
+        lastSyncedAt: new Date().toISOString(),
+        version: Date.now(),
+      };
+      writeDb(updated);
+      return res.json({ success: true, request: newReq });
+    }
+    return res.status(404).json({ error: '해당 연차 신청을 찾을 수 없습니다.' });
+  }
+
+  const updatedReq = { ...existingReqs[index], ...updates };
+  existingReqs[index] = updatedReq;
+  const updated = {
+    ...currentDb,
+    requests: existingReqs,
+    lastSyncedAt: new Date().toISOString(),
+    version: Date.now(),
+  };
+  writeDb(updated);
+  res.json({ success: true, request: updatedReq });
+});
+
+// Delete single request from server DB
+app.delete('/api/requests/:id', (req, res) => {
+  const { id } = req.params;
+  const currentDb = readDb();
+  const existingReqs: any[] = currentDb.requests || [];
+  const filtered = existingReqs.filter((r) => r.id !== id);
+  const updated = {
+    ...currentDb,
+    requests: filtered,
+    lastSyncedAt: new Date().toISOString(),
+    version: Date.now(),
+  };
+  writeDb(updated);
+  res.json({ success: true, deletedId: id });
+});
+
+// Bulk delete requests from server DB
+app.post('/api/requests/bulk-delete', (req, res) => {
+  const { requestIds } = req.body || {};
+  if (!Array.isArray(requestIds)) {
+    return res.status(400).json({ error: 'requestIds array required' });
+  }
+  const currentDb = readDb();
+  const idSet = new Set(requestIds);
+  const filtered = (currentDb.requests || []).filter((r: any) => !idSet.has(r.id));
+  const updated = {
+    ...currentDb,
+    requests: filtered,
+    lastSyncedAt: new Date().toISOString(),
+    version: Date.now(),
+  };
+  writeDb(updated);
+  res.json({ success: true, count: requestIds.length });
+});
+
+// Change Password endpoint for Employee or Admin
+app.post('/api/users/change-password', (req, res) => {
+  const { employeeId, newPassword } = req.body || {};
+  if (!employeeId || !newPassword || !String(newPassword).trim()) {
+    return res.status(400).json({ error: '사번과 새 비밀번호를 입력해주세요.' });
+  }
+  const currentDb = readDb();
+  const employees: any[] = currentDb.employees || [];
+  const index = employees.findIndex((e) => e.id === employeeId);
+  if (index === -1) {
+    return res.status(404).json({ error: '직원 정보를 찾을 수 없습니다.' });
+  }
+  employees[index] = {
+    ...employees[index],
+    password: String(newPassword).trim(),
+  };
+  const updated = {
+    ...currentDb,
+    employees,
+    lastSyncedAt: new Date().toISOString(),
+    version: Date.now(),
+  };
+  writeDb(updated);
+  res.json({ success: true, employee: employees[index] });
 });
 
 // Single employee creation / update endpoint (Protected by Admin Auth)

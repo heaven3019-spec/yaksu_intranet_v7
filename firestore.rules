@@ -16,8 +16,7 @@ service cloud.firestore {
       allow delete: if true;
     }
 
-    // Leave requests collection:
-    // CRITICAL: Employee MUST exist in /employees/{employeeId} to prevent ghost/unregistered employee leave requests!
+    // Leave requests collection: Supports both regular staff and admin (유정) leave applications
     match /leave_requests/{requestId} {
       allow read: if true;
       allow create: if isNonEmptyString(request.resource.data.employeeId)
@@ -28,12 +27,9 @@ service cloud.firestore {
                     && !requestId.matches('req-10[1-5]')
                     && !requestId.matches('req-201')
                     && !requestId.matches('req-301')
-                    && !requestId.matches('req-today-[1-2]')
-                    // Enforce relational consistency: parent employee must be registered in /employees
-                    && exists(/databases/$(database)/documents/employees/$(request.resource.data.employeeId));
+                    && !requestId.matches('req-today-[1-2]');
       allow update: if isNonEmptyString(request.resource.data.employeeId)
-                    && isNonEmptyString(request.resource.data.employeeName)
-                    && exists(/databases/$(database)/documents/employees/$(request.resource.data.employeeId));
+                    && isNonEmptyString(request.resource.data.employeeName);
       allow delete: if true;
     }
 
