@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Employee, LeaveCycleInfo, LeaveRequest, LeaveType } from '../types';
-import { calculateWorkingDays, getLeaveTypeLabel } from '../utils/leaveCalculator';
+import { calculateEmployeeCycles, calculateWorkingDays, getLeaveTypeLabel } from '../utils/leaveCalculator';
 import { 
   getKoreanHoliday, 
   isWeekend, 
@@ -29,6 +29,8 @@ interface LeaveRequestModalProps {
   onClose: () => void;
   employee: Employee;
   currentCycle: LeaveCycleInfo | null;
+  allCycles?: LeaveCycleInfo[];
+  requests?: LeaveRequest[];
   onSubmit: (request: Omit<LeaveRequest, 'id' | 'status' | 'requestedAt'>) => void;
 }
 
@@ -635,6 +637,8 @@ export const LeaveRequestModal: React.FC<LeaveRequestModalProps> = ({
   onClose,
   employee,
   currentCycle,
+  allCycles,
+  requests,
   onSubmit,
 }) => {
   const tomorrowStr = getTomorrowStr();
@@ -686,7 +690,30 @@ export const LeaveRequestModal: React.FC<LeaveRequestModalProps> = ({
 
   if (!isOpen) return null;
 
-  const remaining = currentCycle ? currentCycle.remainingDays : 0;
+  // 선택한 시작일자(startDate)가 속하는 연차 주기를 동적으로 판별 (올해 + 내년도/차기 연차 신청 지원)
+  const candidateCycles = allCycles && allCycles.length > 0 ? allCycles : (currentCycle ? [currentCycle] : []);
+  let targetCycle: LeaveCycleInfo | null =
+    candidateCycles.find((c) => startDate >= c.startDate && startDate <= c.endDate) || null;
+
+  if (!targetCycle && startDate && employee.joinDate) {
+    const dynamicCycles = calculateEmployeeCycles(
+      employee,
+      requests || [],
+      new Date(startDate + 'T00:00:00')
+    );
+    targetCycle =
+      dynamicCycles.find((c) => startDate >= c.startDate && startDate <= c.endDate) || null;
+  }
+
+  if (!targetCycle) {
+    targetCycle = currentCycle;
+  }
+
+  const isFutureCycle = Boolean(
+    targetCycle && currentCycle && targetCycle.cycleIndex > currentCycle.cycleIndex
+  );
+
+  const remaining = targetCycle ? targetCycle.remainingDays : 0;
   const isExceeding = (leaveType === 'ANNUAL' || leaveType === 'HALF_AM' || leaveType === 'HALF_PM' || leaveType === 'HOURLY' || leaveType === 'QUARTER') && calculatedDays > remaining;
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -715,7 +742,8 @@ export const LeaveRequestModal: React.FC<LeaveRequestModalProps> = ({
     }
 
     if (isExceeding) {
-      if (!confirm(`신청 일수(${calculatedDays}일)가 현재 잔여 연차(${remaining}일)를 초과합니다. 계속 신청하시겠습니까?`)) {
+      const cycleText = targetCycle?.label?.split(' ')[0] || '해당 연차 주기';
+      if (!confirm(`신청 일수(${calculatedDays}일)가 ${cycleText} 잔여 연차(${remaining}일)를 초과합니다. 계속 신청하시겠습니까?`)) {
         return;
       }
     }
@@ -765,18 +793,40 @@ export const LeaveRequestModal: React.FC<LeaveRequestModalProps> = ({
           </button>
         </div>
 
-        {/* Current Leave Balance Info Box */}
-        <div className="bg-blue-50/70 border-b border-blue-100 px-5 sm:px-6 py-2.5 flex items-center justify-between text-xs flex-shrink-0">
+        {/* Target Cycle Leave Balance Info Box */}
+        <div
+          className={`border-b px-5 sm:px-6 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs flex-shrink-0 ${
+            isFutureCycle
+              ? 'bg-indigo-50/80 border-indigo-200'
+              : 'bg-blue-50/70 border-blue-100'
+          }`}
+        >
           <div className="flex items-center space-x-2 text-slate-700">
-            <Info className="w-4 h-4 text-blue-600 flex-shrink-0" />
+            <Info className={`w-4 h-4 flex-shrink-0 ${isFutureCycle ? 'text-indigo-600' : 'text-blue-600'}`} />
             <span>
-              현재 잔여 연차: <strong className="text-blue-700 font-extrabold text-sm">{remaining}일</strong>
-              <span className="text-slate-500 ml-1.5 hidden sm:inline">(총 {currentCycle?.totalGranted || 0}일 중 {currentCycle?.usedDays || 0}일 사용)</span>
+              {isFutureCycle ? '차기(내년도) 주기 잔여 연차: ' : '현재 주기 잔여 연차: '}
+              <strong className={`font-extrabold text-sm ${isFutureCycle ? 'text-indigo-700' : 'text-blue-700'}`}>
+                {remaining}일
+              </strong>
+              <span className="text-slate-500 ml-1.5 hidden sm:inline">
+                (총 {targetCycle?.totalGranted || 0}일 중 {targetCycle?.usedDays || 0}일 사용)
+              </span>
             </span>
           </div>
-          <span className="bg-white px-2 py-0.5 rounded-md border border-blue-200 text-xs font-bold text-blue-800 shadow-2xs">
-            {currentCycle?.label?.split(' ')[0] || '현재 주기'}
-          </span>
+          <div className="flex items-center space-x-1.5">
+            {isFutureCycle && (
+              <span className="bg-indigo-600 text-white px-2 py-0.5 rounded-md text-[11px] font-extrabold shadow-2xs">
+                {startDate.slice(0, 4)}년 차기 연차 적용
+              </span>
+            )}
+            <span
+              className={`bg-white px-2 py-0.5 rounded-md border text-xs font-bold shadow-2xs ${
+                isFutureCycle ? 'border-indigo-200 text-indigo-800' : 'border-blue-200 text-blue-800'
+              }`}
+            >
+              {targetCycle ? `${targetCycle.label.split(' ')[0]} (${targetCycle.startDate.slice(2, 7).replace('-', '.')}~)` : '현재 주기'}
+            </span>
+          </div>
         </div>
 
         {/* Form Body - Scrollable inside so header & footer are never lost */}
@@ -937,7 +987,9 @@ export const LeaveRequestModal: React.FC<LeaveRequestModalProps> = ({
                   <span className="text-xs text-slate-400 ml-1">({hourlyHours}시간)</span>
                 )}
                 {isExceeding && (
-                  <p className="text-[11px] text-rose-500 font-bold mt-0.5">잔여 연차 초과</p>
+                  <p className="text-[11px] text-rose-500 font-bold mt-0.5">
+                    {isFutureCycle ? '차기 잔여 연차 초과' : '잔여 연차 초과'}
+                  </p>
                 )}
               </div>
             </div>

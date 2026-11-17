@@ -106,8 +106,10 @@ export function calculateEmployeeCycles(
   const joinDate = new Date(employee.joinDate + 'T00:00:00');
   const now = referenceDate;
   
-  // Find highest year mentioned in employee's leave requests (if any)
-  let maxRequestYear = now.getFullYear();
+  // Ensure we generate cycles at least through the end of next calendar year (for advance next-year requests)
+  // as well as any future year mentioned in employee's leave requests
+  const minTargetYear = now.getFullYear() + 1;
+  let maxRequestYear = Math.max(now.getFullYear(), minTargetYear);
   requests.forEach((r) => {
     if (r.employeeId === employee.id && r.startDate && r.startDate.length >= 4) {
       const y = parseInt(r.startDate.slice(0, 4), 10);
@@ -139,7 +141,14 @@ export function calculateEmployeeCycles(
     const isFuture = cycleStart > now;
 
     // 기본 법정 연차 or 관리자 수동 지정 연차
-    const isManual = isCurrent && (employee.calculationMode === 'MANUAL' || (employee.manualBaseGrantedDays !== undefined && employee.manualBaseGrantedDays !== null));
+    const isManual =
+      (isCurrent || isFuture) &&
+      (employee.calculationMode === 'MANUAL' ||
+        (!employee.calculationMode &&
+          employee.manualBaseGrantedDays !== undefined &&
+          employee.manualBaseGrantedDays !== null)) &&
+      employee.manualBaseGrantedDays !== undefined &&
+      employee.manualBaseGrantedDays !== null;
     const baseGranted = isManual && employee.manualBaseGrantedDays !== undefined
       ? employee.manualBaseGrantedDays
       : getLegalBaseDays(cycleIdx);

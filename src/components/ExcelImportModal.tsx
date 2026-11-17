@@ -91,10 +91,10 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
 
     if (importMode === 'OVERWRITE') {
       // Overwrite, but preserve admin
-      const admin = existingEmployees.find((e) => e.role === 'ADMIN') || {
+      const admin = existingEmployees.find((e) => e.id === 'admin-001' || e.role === 'ADMIN') || {
         id: 'admin-001',
         loginId: 'admin',
-        password: '1234',
+        password: '0410',
         name: '유정',
         position: '센터운영과장 (관리자)',
         email: 'yu.admin@yaksoo.kr',
@@ -104,42 +104,41 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
         status: 'ACTIVE' as const,
       };
 
-      const empsWithAdmin = parseResult.employees.some((e) => e.role === 'ADMIN')
+      const empsWithAdmin = parseResult.employees.some((e) => e.id === admin.id)
         ? parseResult.employees
         : [admin, ...parseResult.employees];
 
       finalEmployees = empsWithAdmin;
       finalRequests = parseResult.requests;
     } else {
-      // MERGE Mode: Match existing by clean name or ID
+      // MERGE Mode: Key strictly by unique employee id so same-name accounts (e.g. 유정 admin vs employee) never collide
       const empMap = new Map<string, Employee>();
-      existingEmployees.forEach((e) => empMap.set(e.name.trim(), { ...e }));
+      existingEmployees.forEach((e) => empMap.set(e.id, { ...e }));
 
       parseResult.employees.forEach((newEmp) => {
-        const key = newEmp.name.trim();
-        if (empMap.has(key)) {
-          const existing = empMap.get(key)!;
-          empMap.set(key, {
+        if (empMap.has(newEmp.id)) {
+          const existing = empMap.get(newEmp.id)!;
+          empMap.set(newEmp.id, {
             ...existing,
             position: newEmp.position || existing.position,
             joinDate: newEmp.joinDate || existing.joinDate,
             phone: newEmp.phone || existing.phone,
           });
         } else {
-          empMap.set(key, newEmp);
+          empMap.set(newEmp.id, newEmp);
         }
       });
 
       finalEmployees = Array.from(empMap.values());
 
-      // Smart Request Deduplication: avoid duplicate entries on re-upload
+      // Smart Request Deduplication keyed by employeeId (never employeeName)
       const requestMap = new Map<string, LeaveRequest>();
       existingRequests.forEach((req) => {
-        const key = `${req.employeeName}_${req.startDate}_${req.endDate}_${req.type}`;
+        const key = `${req.employeeId}_${req.startDate}_${req.endDate}_${req.type}`;
         requestMap.set(key, req);
       });
       parseResult.requests.forEach((req) => {
-        const key = `${req.employeeName}_${req.startDate}_${req.endDate}_${req.type}`;
+        const key = `${req.employeeId}_${req.startDate}_${req.endDate}_${req.type}`;
         requestMap.set(key, req);
       });
 

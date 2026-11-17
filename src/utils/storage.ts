@@ -123,9 +123,11 @@ export async function syncToServer(employees?: Employee[], requests?: LeaveReque
 
 // Post single request directly to backend & Firestore for instant real-time recording
 export async function postSingleRequestToServer(newReq: LeaveRequest) {
+  let firestoreSaved = false;
   try {
     // 1. Write directly to Firestore first for instant cloud persistence
     await saveLeaveRequestToFirestore(newReq);
+    firestoreSaved = true;
   } catch (e) {
     console.error('[Storage] Firestore direct write error:', e);
   }
@@ -149,8 +151,10 @@ export async function postSingleRequestToServer(newReq: LeaveRequest) {
 
     notifyBroadcastChannel('NEW_REQUEST_SUBMITTED', newReq);
   } catch (err) {
-    console.warn('[Storage] Direct request post deferred to background sync:', err);
-    // If Firestore write was successful, do not block the user with an exception
+    console.warn('[Storage] Direct request post warning:', err);
+    if (!firestoreSaved) {
+      throw err;
+    }
   }
 }
 
@@ -360,12 +364,13 @@ export function getStoredEmployees(): Employee[] {
     const sanitized: Employee[] = parsed
       .filter((e) => !MOCK_EMP_IDS.has(e.id) && !MOCK_LOGIN_IDS.has(e.loginId?.toLowerCase()) && e.name !== '테스트계정')
       .map((e): Employee => {
-        // Migrate admin name to 유정 and ensure admin password is 0410
-        if (e.id === 'admin-001' || e.role === 'ADMIN' || e.name === '유과장님' || e.name?.includes('박센터장')) {
+        // Only migrate legacy default admin record; never overwrite custom employee records named 유정
+        if (e.id === 'admin-001' || e.name === '유과장님' || e.name?.includes('박센터장')) {
           return {
             ...e,
             name: '유정',
-            password: e.password === '1234' ? '0410' : (e.password || '0410'),
+            role: 'ADMIN',
+            password: e.password ? String(e.password).trim() : '0410',
             position: '센터운영과장 (관리자)',
             status: e.status || 'ACTIVE',
           };
@@ -373,7 +378,7 @@ export function getStoredEmployees(): Employee[] {
         return {
           ...e,
           loginId: e.loginId || e.id.replace('emp-', 'user'),
-          password: e.password || '1234',
+          password: e.password ? String(e.password).trim() : '1234',
           calculationMode: e.calculationMode || 'AUTO',
           status: e.status || 'ACTIVE',
         };
@@ -389,6 +394,15 @@ export function getStoredEmployees(): Employee[] {
     return sanitized;
   } catch {
     return INITIAL_EMPLOYEES;
+  }
+}
+
+export function saveLocalEmployeesOnly(employees: Employee[]) {
+  try {
+    const clean = employees.filter((e) => !MOCK_EMP_IDS.has(e.id) && !MOCK_LOGIN_IDS.has(e.loginId?.toLowerCase()) && e.name !== '테스트계정');
+    localStorage.setItem(EMPLOYEES_KEY, JSON.stringify(clean));
+  } catch (e) {
+    console.error('Failed to save employees to localStorage', e);
   }
 }
 

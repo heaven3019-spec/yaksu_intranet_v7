@@ -14,7 +14,7 @@ import {
   patchRequestOnServer,
   deleteRequestOnServer,
   bulkDeleteRequestsOnServer,
-  changePasswordOnServer,
+  saveLocalEmployeesOnly,
   subscribeToBroadcastChannel,
   syncToServer,
   runSecurityAuditAndClean,
@@ -47,7 +47,6 @@ import { LeaveRequestModal } from './components/LeaveRequestModal';
 import { LeaveDocumentPrintModal } from './components/LeaveDocumentPrintModal';
 import { ExcelImportModal } from './components/ExcelImportModal';
 import { AdminDirectLeaveModal } from './components/AdminDirectLeaveModal';
-import { PasswordChangeModal } from './components/PasswordChangeModal';
 import { CheckCircle2, AlertCircle, X, FileText } from 'lucide-react';
 
 export default function App() {
@@ -62,8 +61,6 @@ export default function App() {
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
   const [isExcelImportModalOpen, setIsExcelImportModalOpen] = useState(false);
   const [isAdminDirectLeaveOpen, setIsAdminDirectLeaveOpen] = useState(false);
-  const [isPasswordChangeOpen, setIsPasswordChangeOpen] = useState(false);
-  const [passwordChangeEmp, setPasswordChangeEmp] = useState<Employee | null>(null);
   const [printTargetRequest, setPrintTargetRequest] = useState<LeaveRequest | undefined>(undefined);
 
   // Yearly view targeted employee and cycle
@@ -206,10 +203,16 @@ export default function App() {
           currentEmps = getStoredEmployees();
         }
 
-        // Migrate admin name to '유정'
+        // Migrate legacy default admin name to '유정' without overwriting employee accounts or modified passwords
         currentEmps = currentEmps.map((e) => {
-          if (e.id === 'admin-001' || e.role === 'ADMIN' || e.name === '유과장님' || e.name?.includes('박센터장')) {
-            return { ...e, name: '유정', position: '센터운영과장 (관리자)' };
+          if (e.id === 'admin-001' || e.name === '유과장님' || e.name?.includes('박센터장')) {
+            return {
+              ...e,
+              name: '유정',
+              position: '센터운영과장 (관리자)',
+              role: 'ADMIN' as const,
+              password: e.password ? String(e.password).trim() : '0410',
+            };
           }
           return e;
         });
@@ -245,7 +248,7 @@ export default function App() {
 
         setEmployees(currentEmps);
         setRequests(currentReqs);
-        saveStoredEmployees(currentEmps);
+        saveLocalEmployeesOnly(currentEmps);
         saveStoredRequests(currentReqs);
 
         // Step 2: Resolve authentication session
@@ -528,12 +531,14 @@ export default function App() {
     setActiveTab('dashboard');
   }
 
-  // Admin guard: if admin is on removed tabs, redirect to admin-overview
+  // Admin guard: if admin is on removed or employee-only personal tabs, redirect to approval
   if (isAdmin && (
     activeTab === 'calendar' || 
-    activeTab === 'retired-employees'
+    activeTab === 'retired-employees' ||
+    activeTab === 'dashboard' ||
+    activeTab === 'yearly'
   )) {
-    setActiveTab('admin-overview');
+    setActiveTab('approval');
   }
 
   // Filter requests according to User Privacy Rule:
@@ -812,36 +817,54 @@ export default function App() {
     showToast(`연차 신청이 취소되었습니다.`, 'info');
   };
 
-  // Add Employee (Admin only)
+  // Add Employee (Admin only) - Sequential single-record write to prevent batch sync races
   const handleAddEmployee = async (newEmpData: Omit<Employee, 'id'>) => {
     const newEmp: Employee = {
       ...newEmpData,
+      name: newEmpData.name.trim(),
+      loginId: newEmpData.loginId.trim(),
+      position: newEmpData.position.trim(),
+      password: newEmpData.password ? String(newEmpData.password).trim() : '1234',
       id: `emp-${Date.now()}`,
     };
-    const newEmps = [...employees, newEmp];
-    updateEmployees(newEmps);
     try {
       await postSingleEmployeeToServer(newEmp);
+      const newEmps = [...employees, newEmp];
+      setEmployees(newEmps);
+      saveLocalEmployeesOnly(newEmps);
       showToast(`'${newEmp.name}' 직원이 클라우드 및 시스템 데이터베이스에 안전하게 등록되었습니다. (로그인 ID: ${newEmp.loginId})`, 'success');
-    } catch (err) {
+    } catch (err: any) {
       console.error('Save employee error:', err);
-      showToast(`'${newEmp.name}' 직원이 등록되었습니다.`, 'info');
+      const msg = err?.message || '직원 등록 중 오류가 발생했습니다.';
+      showToast(msg, 'error');
+      throw err;
     }
   };
 
-  // Update Employee (Admin only)
+  // Update Employee (Admin only) - Sequential single-record write to prevent batch sync race reverting password
   const handleUpdateEmployee = async (updatedEmp: Employee) => {
-    const newEmps = employees.map((e) => (e.id === updatedEmp.id ? updatedEmp : e));
-    updateEmployees(newEmps);
+    const cleanedEmp: Employee = {
+      ...updatedEmp,
+      name: updatedEmp.name.trim(),
+      loginId: updatedEmp.loginId.trim(),
+      position: updatedEmp.position.trim(),
+      password: updatedEmp.password
+        ? String(updatedEmp.password).trim()
+        : updatedEmp.role === 'ADMIN'
+        ? '0410'
+        : '1234',
+    };
     try {
-      await postSingleEmployeeToServer(updatedEmp);
-      if (updatedEmp.password) {
-        await changePasswordOnServer(updatedEmp.id, updatedEmp.password).catch(() => {});
-      }
-      showToast(`'${updatedEmp.name}' 직원 정보가 클라우드 및 시스템 데이터베이스에 성공적으로 수정되었습니다.`, 'success');
-    } catch (err) {
+      await postSingleEmployeeToServer(cleanedEmp);
+      const newEmps = employees.map((e) => (e.id === cleanedEmp.id ? cleanedEmp : e));
+      setEmployees(newEmps);
+      saveLocalEmployeesOnly(newEmps);
+      showToast(`'${cleanedEmp.name}' 직원 정보(로그인 ID 및 비밀번호 포함)가 영구 저장되었습니다.`, 'success');
+    } catch (err: any) {
       console.error('Update employee error:', err);
-      showToast(`'${updatedEmp.name}' 직원 정보가 수정되었습니다.`, 'info');
+      const msg = err?.message || '직원 정보 저장 중 오류가 발생했습니다.';
+      showToast(msg, 'error');
+      throw err;
     }
   };
 
@@ -951,10 +974,6 @@ export default function App() {
         onResetData={handleResetData}
         onManualSync={handleManualSync}
         isSyncing={isSyncing}
-        onOpenPasswordChange={isAdmin ? () => {
-          setPasswordChangeEmp(currentEmployee);
-          setIsPasswordChangeOpen(true);
-        } : undefined}
       />
 
       {/* Main Content Area */}
@@ -984,8 +1003,8 @@ export default function App() {
           />
         )}
 
-        {/* Tab: 내 연차 현황 & 신청 (Employee & Admin personal view) */}
-        {activeTab === 'dashboard' && (
+        {/* Tab: 내 연차 현황 & 신청 (Employee personal view only) */}
+        {!isAdmin && activeTab === 'dashboard' && (
           <EmployeeDashboard
             employee={currentEmployee}
             currentCycle={currentEmpActiveCycle}
@@ -995,21 +1014,17 @@ export default function App() {
             onCancelRequest={handleCancelRequest}
             onViewYearlyDetail={handleViewYearlyDetail}
             onOpenPrintModal={handleOpenPrintModal}
-            onOpenPasswordChange={isAdmin ? () => {
-              setPasswordChangeEmp(currentEmployee);
-              setIsPasswordChangeOpen(true);
-            } : undefined}
           />
         )}
 
-        {/* Tab: 내 1년 연차대장 조회 (Employee & Admin view) */}
-        {activeTab === 'yearly' && (
+        {/* Tab: 내 1년 연차대장 조회 (Employee personal view only) */}
+        {!isAdmin && activeTab === 'yearly' && (
           <YearlyLeaveView
-            employees={isAdmin ? employees : [currentEmployee]}
+            employees={[currentEmployee]}
             selectedEmployee={yearlyEmployee}
             onSelectEmployee={(emp) => setSelectedYearlyEmployeeId(emp.id)}
             cycles={yearlyEmpCycles}
-            requests={isAdmin ? requests : userVisibleRequests}
+            requests={userVisibleRequests}
             initialCycleIndex={targetedCycleIndex}
             initialStatusFilter={targetedStatusFilter}
             onOpenPrintModal={handleOpenPrintModal}
@@ -1046,10 +1061,6 @@ export default function App() {
             onRestoreEmployee={handleRestoreEmployee}
             onSelectEmployeeForYearly={(emp) => {
               setAdminYearlyModalEmp(emp);
-            }}
-            onOpenPasswordChange={(emp) => {
-              setPasswordChangeEmp(emp);
-              setIsPasswordChangeOpen(true);
             }}
           />
         )}
@@ -1101,13 +1112,15 @@ export default function App() {
         </div>
       </footer>
 
-      {/* Leave Request Modal */}
-      {isRequestModalOpen && (
+      {/* Leave Request Modal (Employee personal login only) */}
+      {!isAdmin && isRequestModalOpen && (
         <LeaveRequestModal
           isOpen={isRequestModalOpen}
           onClose={() => setIsRequestModalOpen(false)}
           employee={currentEmployee}
           currentCycle={currentEmpActiveCycle}
+          allCycles={currentEmpCycles}
+          requests={requests}
           onSubmit={handleSubmitLeaveRequest}
         />
       )}
@@ -1143,23 +1156,6 @@ export default function App() {
           requests={requests}
           adminName={currentEmployee.name}
           onSubmit={handleSubmitDirectLeave}
-        />
-      )}
-
-      {/* Password Change Modal (Requirement 4) */}
-      {isPasswordChangeOpen && passwordChangeEmp && (
-        <PasswordChangeModal
-          isOpen={isPasswordChangeOpen}
-          onClose={() => {
-            setIsPasswordChangeOpen(false);
-            setPasswordChangeEmp(null);
-          }}
-          targetEmployee={passwordChangeEmp}
-          onPasswordUpdated={(updatedEmp) => {
-            const newEmps = employees.map((e) => (e.id === updatedEmp.id ? updatedEmp : e));
-            updateEmployees(newEmps);
-            showToast(`'${updatedEmp.name}' 직원의 비밀번호가 성공적으로 변경되었습니다.`, 'success');
-          }}
         />
       )}
 

@@ -102,14 +102,38 @@ export const AdminApprovalView: React.FC<AdminApprovalViewProps> = ({
     return Array.from(months).sort().reverse();
   }, [historyRequests]);
 
-  // Staff breakdown with history statistics
+  // Detect duplicate employee names (e.g. 유정 admin vs 유정 employee)
+  const duplicateNames = useMemo(() => {
+    const counts = new Map<string, number>();
+    employees.forEach((e) => {
+      const n = e.name.trim();
+      counts.set(n, (counts.get(n) || 0) + 1);
+    });
+    const dupes = new Set<string>();
+    counts.forEach((c, n) => {
+      if (c > 1) dupes.add(n);
+    });
+    return dupes;
+  }, [employees]);
+
+  // Staff breakdown with history statistics (keyed strictly by employeeId)
   const staffWithHistory = useMemo(() => {
-    const map = new Map<string, { total: number; approvedDays: number; emp?: Employee }>();
+    const map = new Map<
+      string,
+      { name: string; position: string; role?: 'ADMIN' | 'EMPLOYEE'; total: number; approvedDays: number; emp?: Employee }
+    >();
     historyRequests.forEach((r) => {
-      const key = r.employeeName;
+      const key = r.employeeId;
       if (!map.has(key)) {
-        const found = employees.find((e) => e.name === key || e.id === r.employeeId);
-        map.set(key, { total: 0, approvedDays: 0, emp: found });
+        const found = employees.find((e) => e.id === key);
+        map.set(key, {
+          name: found?.name || r.employeeName,
+          position: found?.position || r.position,
+          role: found?.role,
+          total: 0,
+          approvedDays: 0,
+          emp: found,
+        });
       }
       const item = map.get(key)!;
       item.total += 1;
@@ -117,19 +141,20 @@ export const AdminApprovalView: React.FC<AdminApprovalViewProps> = ({
         item.approvedDays += r.daysCount;
       }
     });
-    return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0], 'ko'));
+    return Array.from(map.entries()).sort((a, b) => a[1].name.localeCompare(b[1].name, 'ko'));
   }, [historyRequests, employees]);
 
   // Selected employee information for detailed summary banner
   const selectedEmployeeInfo = useMemo(() => {
     if (historyEmployeeFilter === 'ALL') return null;
-    const foundEmp = employees.find((e) => e.name === historyEmployeeFilter || e.id === historyEmployeeFilter);
-    const historyList = historyRequests.filter((r) => r.employeeName === historyEmployeeFilter || r.employeeId === historyEmployeeFilter);
+    const foundEmp = employees.find((e) => e.id === historyEmployeeFilter);
+    const historyList = historyRequests.filter((r) => r.employeeId === historyEmployeeFilter);
     const approvedDays = historyList.filter((r) => r.status === 'APPROVED').reduce((sum, r) => sum + r.daysCount, 0);
 
     return {
-      name: foundEmp?.name || historyEmployeeFilter,
+      name: foundEmp?.name || historyList[0]?.employeeName || historyEmployeeFilter,
       position: foundEmp?.position || historyList[0]?.position || '직원',
+      role: foundEmp?.role,
       joinDate: foundEmp?.joinDate,
       totalCount: historyList.length,
       approvedDays: Number(approvedDays.toFixed(2)),
@@ -153,9 +178,9 @@ export const AdminApprovalView: React.FC<AdminApprovalViewProps> = ({
     if (activeTab === 'CANCELLED') {
       let list = cancelledRequests;
 
-      // 1. Employee Filter
+      // 1. Employee Filter (strictly by employeeId)
       if (historyEmployeeFilter !== 'ALL') {
-        list = list.filter((r) => r.employeeName === historyEmployeeFilter || r.employeeId === historyEmployeeFilter);
+        list = list.filter((r) => r.employeeId === historyEmployeeFilter);
       }
 
       // 2. Month Filter
@@ -190,9 +215,9 @@ export const AdminApprovalView: React.FC<AdminApprovalViewProps> = ({
     // HISTORY TAB
     let list = historyRequests;
 
-    // 1. Employee Filter
+    // 1. Employee Filter (strictly by employeeId)
     if (historyEmployeeFilter !== 'ALL') {
-      list = list.filter((r) => r.employeeName === historyEmployeeFilter || r.employeeId === historyEmployeeFilter);
+      list = list.filter((r) => r.employeeId === historyEmployeeFilter);
     }
 
     // 2. Month Filter
@@ -555,9 +580,9 @@ export const AdminApprovalView: React.FC<AdminApprovalViewProps> = ({
                   className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-semibold text-slate-800 focus:bg-white focus:ring-2 focus:ring-blue-500 outline-hidden cursor-pointer"
                 >
                   <option value="ALL">전체 직원 보기 ({historyRequests.length}건)</option>
-                  {staffWithHistory.map(([name, data]) => (
-                    <option key={name} value={name}>
-                      {name} {data.emp?.position ? `(${data.emp.position})` : ''} - {data.total}건 ({data.approvedDays}일 승인)
+                  {staffWithHistory.map(([empId, data]) => (
+                    <option key={empId} value={empId}>
+                      {data.role === 'ADMIN' ? '[관리자] ' : ''}{data.name} {data.position ? `(${data.position})` : ''} - {data.total}건 ({data.approvedDays}일 승인)
                     </option>
                   ))}
                 </select>
@@ -641,20 +666,25 @@ export const AdminApprovalView: React.FC<AdminApprovalViewProps> = ({
                 >
                   전체
                 </button>
-                {staffWithHistory.map(([name, data]) => {
-                  const isSelected = historyEmployeeFilter === name;
+                {staffWithHistory.map(([empId, data]) => {
+                  const isSelected = historyEmployeeFilter === empId;
+                  const isDupeOrAdmin = data.role === 'ADMIN' || duplicateNames.has(data.name);
                   return (
                     <button
-                      key={name}
+                      key={empId}
                       type="button"
-                      onClick={() => setHistoryEmployeeFilter(name)}
+                      onClick={() => setHistoryEmployeeFilter(empId)}
                       className={`text-[11px] font-bold px-2.5 py-0.5 rounded-lg whitespace-nowrap transition-colors cursor-pointer flex items-center space-x-1 ${
                         isSelected
                           ? 'bg-blue-600 text-white shadow-2xs'
                           : 'bg-slate-50 border border-slate-200 text-slate-700 hover:bg-slate-100'
                       }`}
                     >
-                      <span>{name}</span>
+                      <span>
+                        {data.role === 'ADMIN' ? '[관리자] ' : ''}
+                        {data.name}
+                        {isDupeOrAdmin && data.role !== 'ADMIN' ? ` (${data.position})` : ''}
+                      </span>
                       <span className={`text-[10px] ${isSelected ? 'text-blue-100' : 'text-slate-400'}`}>
                         ({data.total})
                       </span>
@@ -753,8 +783,8 @@ export const AdminApprovalView: React.FC<AdminApprovalViewProps> = ({
                 >
                   <option value="ALL">전체 직원 보기 ({cancelledRequests.length}건)</option>
                   {employees.map((emp) => (
-                    <option key={emp.id} value={emp.name}>
-                      {emp.name} ({emp.position})
+                    <option key={emp.id} value={emp.id}>
+                      {emp.role === 'ADMIN' ? '[관리자] ' : ''}{emp.name} ({emp.position})
                     </option>
                   ))}
                 </select>
@@ -929,6 +959,11 @@ export const AdminApprovalView: React.FC<AdminApprovalViewProps> = ({
                     <div className="space-y-2.5 flex-1 min-w-0">
                       <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
                         <span className="text-base sm:text-lg font-bold text-slate-900">{req.employeeName}</span>
+                        {(emp?.role === 'ADMIN' || req.employeeId === 'admin-001') && (
+                          <span className="text-[10px] font-black bg-rose-100 text-rose-700 px-1.5 py-0.5 rounded border border-rose-200">
+                            관리자 본인
+                          </span>
+                        )}
                       <span className="text-xs text-slate-500 font-medium bg-slate-100 px-2 py-0.5 rounded-md">
                         {req.position}
                       </span>

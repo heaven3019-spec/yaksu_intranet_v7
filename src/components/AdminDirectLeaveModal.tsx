@@ -32,8 +32,10 @@ export const AdminDirectLeaveModal: React.FC<AdminDirectLeaveModalProps> = ({
   adminName,
   onSubmit,
 }) => {
-  // Filter active staff + admin
-  const activeStaff = employees.filter((e) => e.status !== 'RETIRED');
+  // Filter active staff only (exclude system admin account)
+  const activeStaff = employees.filter(
+    (e) => e.status !== 'RETIRED' && e.role !== 'ADMIN' && e.id !== 'admin-001'
+  );
 
   const [selectedEmpId, setSelectedEmpId] = useState<string>(activeStaff[0]?.id || '');
   const [leaveType, setLeaveType] = useState<LeaveType>('ANNUAL');
@@ -55,6 +57,15 @@ export const AdminDirectLeaveModal: React.FC<AdminDirectLeaveModalProps> = ({
   const targetEmp = employees.find((e) => e.id === selectedEmpId) || activeStaff[0];
   const empCycles = targetEmp ? calculateEmployeeCycles(targetEmp, requests) : [];
   const currentCycle = empCycles.find((c) => c.isCurrent) || empCycles[0];
+  let targetCycle = empCycles.find((c) => startDate >= c.startDate && startDate <= c.endDate) || null;
+  if (!targetCycle && targetEmp && startDate && targetEmp.joinDate) {
+    const dynCycles = calculateEmployeeCycles(targetEmp, requests, new Date(startDate + 'T00:00:00'));
+    targetCycle = dynCycles.find((c) => startDate >= c.startDate && startDate <= c.endDate) || null;
+  }
+  if (!targetCycle) {
+    targetCycle = currentCycle;
+  }
+  const isFutureCycle = Boolean(targetCycle && currentCycle && targetCycle.cycleIndex > currentCycle.cycleIndex);
 
   useEffect(() => {
     if (leaveType === 'HALF_AM' || leaveType === 'HALF_PM') {
@@ -168,21 +179,22 @@ export const AdminDirectLeaveModal: React.FC<AdminDirectLeaveModalProps> = ({
                 const curr = cycles.find((c) => c.isCurrent) || cycles[0];
                 return (
                   <option key={emp.id} value={emp.id}>
-                    {emp.name} ({emp.position}) · 입사일: {emp.joinDate.replace(/-/g, '.')} · 잔여: {curr?.remainingDays || 0}일
+                    {emp.role === 'ADMIN' ? '[관리자] ' : '[직원] '}{emp.name} ({emp.position}) · 입사일: {emp.joinDate.replace(/-/g, '.')} · 잔여: {curr?.remainingDays || 0}일
                   </option>
                 );
               })}
             </select>
           </div>
 
-          {targetEmp && currentCycle && (
-            <div className="p-3 bg-blue-50/70 rounded-2xl border border-blue-200/80 flex items-center justify-between text-xs text-blue-900">
+          {targetEmp && targetCycle && (
+            <div className={`p-3 rounded-2xl border flex items-center justify-between text-xs ${isFutureCycle ? 'bg-indigo-50/80 border-indigo-200 text-indigo-900' : 'bg-blue-50/70 border-blue-200/80 text-blue-900'}`}>
               <span className="font-semibold">
-                선택 직원 잔여 연차: <strong className="text-blue-700 font-extrabold text-sm">{currentCycle.remainingDays}일</strong>
-                <span className="text-slate-500 ml-1">(부여 {currentCycle.totalGranted}일 / 사용 {currentCycle.usedDays}일)</span>
+                {isFutureCycle ? `${startDate.slice(0, 4)}년 차기 잔여 연차: ` : '선택 직원 잔여 연차: '}
+                <strong className={`font-extrabold text-sm ${isFutureCycle ? 'text-indigo-700' : 'text-blue-700'}`}>{targetCycle.remainingDays}일</strong>
+                <span className="text-slate-500 ml-1">(부여 {targetCycle.totalGranted}일 / 사용 {targetCycle.usedDays}일)</span>
               </span>
-              <span className="text-[11px] bg-white px-2 py-0.5 rounded font-bold border border-blue-200 text-blue-800">
-                {currentCycle.label?.split(' ')[0] || '현재 주기'}
+              <span className={`text-[11px] bg-white px-2 py-0.5 rounded font-bold border ${isFutureCycle ? 'border-indigo-200 text-indigo-800' : 'border-blue-200 text-blue-800'}`}>
+                {targetCycle.label?.split(' ')[0] || '현재 주기'}
               </span>
             </div>
           )}

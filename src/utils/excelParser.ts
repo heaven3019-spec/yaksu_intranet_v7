@@ -237,12 +237,22 @@ export async function parseExcelLeaveFile(
   const yearStats: { [year: string]: number } = {};
   const employeeStats: { [empName: string]: { total: number; [year: string]: number } } = {};
 
-  // Build employee lookup cache
-  const empMap = new Map<string, Employee>();
+  // Build employee lookup cache supporting multiple accounts with the same name (e.g. 유정 admin vs 유정 employee)
+  const empCandidatesMap = new Map<string, Employee[]>();
+  const addCandidate = (key: string, emp: Employee) => {
+    if (!key) return;
+    const list = empCandidatesMap.get(key) || [];
+    if (!list.some((x) => x.id === emp.id)) {
+      list.push(emp);
+      empCandidatesMap.set(key, list);
+    }
+  };
+
   existingEmployees.forEach((emp) => {
-    empMap.set(emp.name.trim(), emp);
-    empMap.set(emp.name.replace(/\(.*?\)/g, '').trim(), emp);
-    empMap.set(cleanHeader(emp.name), emp);
+    addCandidate(emp.name.trim(), emp);
+    addCandidate(emp.name.replace(/\(.*?\)/g, '').trim(), emp);
+    addCandidate(cleanHeader(emp.name), emp);
+    addCandidate(cleanHeader(emp.name.replace(/\(.*?\)/g, '').trim()), emp);
   });
 
   const newlyCreatedEmpMap = new Map<string, Employee>();
@@ -250,16 +260,60 @@ export async function parseExcelLeaveFile(
   // Helper to resolve or auto-create employee
   const resolveEmployee = (rawName: string, position?: string, joinDate?: string, defaultYear?: string): Employee => {
     const trimmed = String(rawName || '').trim();
-    const cleanKey = cleanHeader(trimmed);
+    const cleanName = trimmed.replace(/\(.*?\)/g, '').trim();
+    const cleanKey = cleanHeader(cleanName || trimmed);
+    const cleanPos = cleanHeader(position || '');
 
-    let emp = empMap.get(trimmed) || empMap.get(cleanKey);
+    let candidates: Employee[] = [
+      ...(empCandidatesMap.get(trimmed) || []),
+      ...(empCandidatesMap.get(cleanName) || []),
+      ...(empCandidatesMap.get(cleanHeader(trimmed)) || []),
+      ...(empCandidatesMap.get(cleanKey) || []),
+    ];
 
-    // Fuzzy matching
-    if (!emp) {
-      for (const [key, existing] of empMap.entries()) {
-        if (cleanKey.length >= 2 && (key.includes(cleanKey) || cleanKey.includes(key))) {
-          emp = existing;
-          break;
+    // Deduplicate candidates by id
+    const uniqueCandidates: Employee[] = [];
+    const seenIds = new Set<string>();
+    for (const c of candidates) {
+      if (!seenIds.has(c.id)) {
+        seenIds.add(c.id);
+        uniqueCandidates.push(c);
+      }
+    }
+
+    // Fuzzy matching if no exact candidates
+    if (uniqueCandidates.length === 0 && cleanKey.length >= 2) {
+      for (const [key, list] of empCandidatesMap.entries()) {
+        if (key.includes(cleanKey) || cleanKey.includes(key)) {
+          for (const c of list) {
+            if (!seenIds.has(c.id)) {
+              seenIds.add(c.id);
+              uniqueCandidates.push(c);
+            }
+          }
+        }
+      }
+    }
+
+    let emp: Employee | undefined;
+    if (uniqueCandidates.length > 0) {
+      const targetsAdmin =
+        trimmed.includes('관리자') ||
+        cleanPos.includes('관리자') ||
+        cleanPos.includes('센터운영과장');
+
+      if (targetsAdmin) {
+        emp = uniqueCandidates.find((c) => c.role === 'ADMIN' || c.id === 'admin-001') || uniqueCandidates[0];
+      } else {
+        const staffCandidates = uniqueCandidates.filter((c) => c.role !== 'ADMIN' && c.id !== 'admin-001');
+        if (staffCandidates.length > 0) {
+          // Prefer exact position match if available among non-admin staff
+          emp =
+            (cleanPos && cleanPos !== '직원'
+              ? staffCandidates.find((c) => cleanHeader(c.position).includes(cleanPos) || cleanPos.includes(cleanHeader(c.position)))
+              : undefined) || staffCandidates[0];
+        } else {
+          emp = uniqueCandidates[0];
         }
       }
     }
@@ -269,18 +323,27 @@ export async function parseExcelLeaveFile(
     }
 
     if (!emp) {
-      const cleanName = trimmed.replace(/\(.*?\)/g, '').trim();
       const fallbackJoinYear = defaultYear || '2024';
+      const baseLogin = `user_${cleanKey || Date.now().toString().slice(-4)}`;
+      const existingLoginSet = new Set(
+        [...existingEmployees, ...parsedEmployees].map((e) => e.loginId.trim().toLowerCase())
+      );
+      let finalLoginId = baseLogin;
+      let suffix = 2;
+      while (existingLoginSet.has(finalLoginId.toLowerCase())) {
+        finalLoginId = `${baseLogin}${suffix++}`;
+      }
+
       const newEmp: Employee = {
         id: `emp-excel-${Date.now()}-${newlyCreatedEmpMap.size}`,
-        loginId: `user_${cleanHeader(cleanName)}`,
+        loginId: finalLoginId,
         password: '1234',
         name: cleanName || trimmed,
         position: position || '직원',
-        email: `${cleanHeader(cleanName)}@yaksoo.kr`,
+        email: `${finalLoginId}@yaksoo.kr`,
         phone: '010-0000-0000',
         joinDate: joinDate && joinDate.length === 10 ? joinDate : `${fallbackJoinYear}-01-01`,
-        role: trimmed.includes('관리자') || trimmed.includes('원장') || trimmed.includes('과장') ? 'ADMIN' : 'EMPLOYEE',
+        role: 'EMPLOYEE',
         status: 'ACTIVE',
         avatarColor: 'from-blue-500 to-indigo-600',
         calculationMode: 'AUTO',
@@ -288,13 +351,13 @@ export async function parseExcelLeaveFile(
       };
       parsedEmployees.push(newEmp);
       newlyCreatedEmpMap.set(cleanKey, newEmp);
-      empMap.set(cleanKey, newEmp);
+      addCandidate(cleanKey, newEmp);
       emp = newEmp;
     } else {
       if (joinDate && joinDate.length === 10 && (!emp.joinDate || emp.joinDate === '2025-01-01')) {
         emp.joinDate = joinDate;
       }
-      if (position && (!emp.position || emp.position === '직원')) {
+      if (position && (!emp.position || emp.position === '직원') && emp.role !== 'ADMIN') {
         emp.position = position;
       }
     }
@@ -428,7 +491,7 @@ export async function parseExcelLeaveFile(
           status = 'REJECTED';
         }
 
-        const reqId = `req-excel-${recordYear}-${cleanHeader(matchedEmp.name)}-${normalizedStart}-${r}`;
+        const reqId = `req-excel-${recordYear}-${matchedEmp.id}-${normalizedStart}-${r}`;
         const newReq: LeaveRequest = {
           id: reqId,
           employeeId: matchedEmp.id,
@@ -452,7 +515,7 @@ export async function parseExcelLeaveFile(
         yearStats[recordYear] = (yearStats[recordYear] || 0) + 1;
 
         // Update employee statistics
-        const empDisplayName = matchedEmp.name;
+        const empDisplayName = matchedEmp.role === 'ADMIN' ? `${matchedEmp.name} (관리자)` : matchedEmp.name;
         if (!employeeStats[empDisplayName]) {
           employeeStats[empDisplayName] = { total: 0 };
         }

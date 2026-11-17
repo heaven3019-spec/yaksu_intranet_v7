@@ -203,6 +203,10 @@ export const YearlyLeaveView: React.FC<YearlyLeaveViewProps> = ({
   };
 
   const staffOnly = employees.filter((e) => e.role !== 'ADMIN' && e.id !== 'admin-001');
+  const selectableEmployees =
+    selectedEmployee.role === 'ADMIN' || selectedEmployee.id === 'admin-001'
+      ? employees
+      : staffOnly;
 
   return (
     <div className="space-y-6">
@@ -216,13 +220,14 @@ export const YearlyLeaveView: React.FC<YearlyLeaveViewProps> = ({
                 id="yearly-employee-select"
                 value={selectedEmployee.id}
                 onChange={(e) => {
-                  const emp = staffOnly.find((x) => x.id === e.target.value);
+                  const emp = selectableEmployees.find((x) => x.id === e.target.value);
                   if (emp) onSelectEmployee(emp);
                 }}
                 className="w-full sm:w-auto text-xs sm:text-sm font-semibold bg-slate-50 text-slate-900 border border-slate-200 rounded-xl px-3 py-2.5 sm:py-2 focus:ring-2 focus:ring-blue-500 focus:bg-white cursor-pointer shadow-2xs"
               >
-                {staffOnly.map((emp) => (
+                {selectableEmployees.map((emp) => (
                   <option key={emp.id} value={emp.id}>
+                    {emp.role === 'ADMIN' ? '[관리자] ' : '[직원] '}
                     {emp.name} ({emp.position}) [입사: {emp.joinDate}]
                   </option>
                 ))}

@@ -80,7 +80,8 @@ function readDb() {
               ...e,
               name: '유정',
               position: '센터운영과장 (관리자)',
-              password: e.password || '0410',
+              role: 'ADMIN',
+              password: e.password ? String(e.password).trim() : '0410',
             };
           }
           return e;
@@ -326,16 +327,52 @@ app.post('/api/employees', (req, res) => {
     return res.status(403).json({ error: '직원 등록 및 수정은 관리자(유과장님) 전용 기능입니다.' });
   }
 
-  console.log(`[API /api/employees] Authorized Upserting employee: ${newEmployee.name} (${newEmployee.loginId}, id: ${newEmployee.id})`);
+  const cleanLoginId = String(newEmployee.loginId).trim();
+  const cleanName = String(newEmployee.name).trim();
+  const cleanPosition = String(newEmployee.position || '직원').trim();
+  const cleanPassword = newEmployee.password !== undefined ? String(newEmployee.password).trim() : undefined;
+
+  if (!cleanLoginId || !cleanName) {
+    return res.status(400).json({ error: '직원 이름과 로그인 ID는 비워둘 수 없습니다.' });
+  }
+
+  console.log(`[API /api/employees] Authorized Upserting employee: ${cleanName} (${cleanLoginId}, id: ${newEmployee.id})`);
   const currentDb = readDb();
   const existingEmployees: any[] = currentDb.employees || [];
 
-  const index = existingEmployees.findIndex((e) => e.id === newEmployee.id || e.loginId === newEmployee.loginId);
+  // Prevent duplicate loginId across different employee IDs
+  const duplicateLogin = existingEmployees.find(
+    (e) =>
+      e.id !== newEmployee.id &&
+      String(e.loginId || '').trim().toLowerCase() === cleanLoginId.toLowerCase()
+  );
+  if (duplicateLogin) {
+    return res.status(400).json({
+      error: `이미 '${duplicateLogin.name}' 계정에서 사용 중인 로그인 ID('${cleanLoginId}')입니다. 다른 아이디를 입력해주세요.`,
+    });
+  }
+
+  // Match strictly by unique employee id first
+  const index = existingEmployees.findIndex((e) => e.id === newEmployee.id);
+  const normalizedIncoming = {
+    ...newEmployee,
+    loginId: cleanLoginId,
+    name: cleanName,
+    position: cleanPosition,
+    ...(cleanPassword ? { password: cleanPassword } : {}),
+  };
+
   let updatedEmployees: any[];
+  let savedEmployee: any;
   if (index >= 0) {
-    updatedEmployees = existingEmployees.map((e, i) => (i === index ? { ...e, ...newEmployee } : e));
+    savedEmployee = { ...existingEmployees[index], ...normalizedIncoming };
+    updatedEmployees = existingEmployees.map((e, i) => (i === index ? savedEmployee : e));
   } else {
-    updatedEmployees = [...existingEmployees, newEmployee];
+    savedEmployee = {
+      ...normalizedIncoming,
+      password: cleanPassword || '1234',
+    };
+    updatedEmployees = [...existingEmployees, savedEmployee];
   }
 
   const updated = {
@@ -345,7 +382,7 @@ app.post('/api/employees', (req, res) => {
     version: Date.now(),
   };
   writeDb(updated);
-  res.json({ success: true, employee: newEmployee, version: updated.version });
+  res.json({ success: true, employee: savedEmployee, version: updated.version });
 });
 
 // Direct server-side authentication endpoint
@@ -362,17 +399,21 @@ app.post('/api/login', (req, res) => {
   const currentDb = readDb();
   const employees: any[] = currentDb.employees || [];
 
-  const target = employees.find(
+  const candidates = employees.filter(
     (e) => String(e.loginId || '').trim().toLowerCase() === cleanId
   );
 
-  if (!target) {
+  if (candidates.length === 0) {
     console.log(`[API /api/login] FAILED: ID "${cleanId}" not found in server DB (${employees.length} employees available)`);
     return res.status(404).json({ error: `'${loginId}'는 등록되지 않은 아이디입니다. 관리자에게 문의해주세요.` });
   }
 
-  const expectedPw = String(target.password || (target.role === 'ADMIN' ? '0410' : '1234')).trim();
-  if (cleanPw !== expectedPw) {
+  const target = candidates.find((c) => {
+    const expectedPw = String(c.password || (c.role === 'ADMIN' ? '0410' : '1234')).trim();
+    return cleanPw === expectedPw;
+  });
+
+  if (!target) {
     console.log(`[API /api/login] FAILED: Password mismatch for ID "${cleanId}"`);
     return res.status(401).json({ error: '비밀번호가 일치하지 않습니다. 다시 확인해주세요.' });
   }

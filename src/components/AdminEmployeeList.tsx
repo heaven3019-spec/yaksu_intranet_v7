@@ -34,19 +34,18 @@ import {
   ArrowUp,
   ArrowDown,
   Sparkles,
-  Key
+  AlertCircle
 } from 'lucide-react';
 
 interface AdminEmployeeListProps {
   employees: Employee[];
   requests: LeaveRequest[];
-  onAddEmployee: (emp: Omit<Employee, 'id'>) => void;
-  onUpdateEmployee: (emp: Employee) => void;
+  onAddEmployee: (emp: Omit<Employee, 'id'>) => Promise<void> | void;
+  onUpdateEmployee: (emp: Employee) => Promise<void> | void;
   onDeleteEmployee: (empId: string) => void;
   onRetireEmployee: (empId: string, retiredDate: string) => void;
   onRestoreEmployee: (empId: string) => void;
   onSelectEmployeeForYearly: (emp: Employee) => void;
-  onOpenPasswordChange?: (emp: Employee) => void;
   initialTab?: 'ACTIVE' | 'RETIRED';
 }
 
@@ -62,7 +61,6 @@ export const AdminEmployeeList: React.FC<AdminEmployeeListProps> = ({
   onRetireEmployee,
   onRestoreEmployee,
   onSelectEmployeeForYearly,
-  onOpenPasswordChange,
   initialTab = 'ACTIVE',
 }) => {
   const [currentTab, setCurrentTab] = useState<'ACTIVE' | 'RETIRED'>(initialTab);
@@ -73,7 +71,10 @@ export const AdminEmployeeList: React.FC<AdminEmployeeListProps> = ({
   const [sortDirection, setSortDirection] = useState<SortDirection>('ASC');
 
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [addError, setAddError] = useState<string>('');
   const [editEmpModal, setEditEmpModal] = useState<Employee | null>(null);
+  const [editError, setEditError] = useState<string>('');
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
 
   // Modals for Retire & Delete
   const [retireTargetEmp, setRetireTargetEmp] = useState<Employee | null>(null);
@@ -172,17 +173,27 @@ export const AdminEmployeeList: React.FC<AdminEmployeeListProps> = ({
   const estimatedTenure = calculateTenure(newJoinDate);
   const estimatedLegalDays = calculateLegalAnnualLeaveDays(newJoinDate);
 
-  const handleCreateEmployee = (e: React.FormEvent) => {
+  const handleCreateEmployee = async (e: React.FormEvent) => {
     e.preventDefault();
+    setAddError('');
     if (!newName.trim() || !newJoinDate) return;
 
     const generatedLoginId = newLoginId.trim() || `emp${Date.now().toString().slice(-4)}`;
+    const cleanPassword = newPassword.trim() || '1234';
 
-    onAddEmployee({
+    const duplicate = employees.find(
+      (emp) => emp.loginId.trim().toLowerCase() === generatedLoginId.toLowerCase()
+    );
+    if (duplicate) {
+      setAddError(`이미 '${duplicate.name}' 직원이 사용 중인 로그인 ID('${generatedLoginId}')입니다.`);
+      return;
+    }
+
+    await onAddEmployee({
       loginId: generatedLoginId,
-      password: newPassword.trim() || '1234',
+      password: cleanPassword,
       name: newName.trim(),
-      position: newPosition.trim(),
+      position: newPosition.trim() || '직원',
       email: newEmail.trim() || `${generatedLoginId}@yaksoo.kr`,
       phone: newPhone.trim(),
       joinDate: newJoinDate,
@@ -201,11 +212,59 @@ export const AdminEmployeeList: React.FC<AdminEmployeeListProps> = ({
     setNewCalculationMode('AUTO');
   };
 
-  const handleSaveEdit = (e: React.FormEvent) => {
+  const handleSaveEdit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editEmpModal) return;
-    onUpdateEmployee(editEmpModal);
-    setEditEmpModal(null);
+    setEditError('');
+
+    const cleanLoginId = (editEmpModal.loginId || '').trim();
+    const cleanPassword = (editEmpModal.password || '').trim();
+    const cleanName = (editEmpModal.name || '').trim();
+    const cleanPosition = (editEmpModal.position || '').trim();
+
+    if (!cleanLoginId) {
+      setEditError('로그인 ID를 입력해주세요.');
+      return;
+    }
+    if (!cleanPassword) {
+      setEditError('비밀번호를 입력해주세요. (공백 불가)');
+      return;
+    }
+    if (!cleanName) {
+      setEditError('직원 이름을 입력해주세요.');
+      return;
+    }
+
+    const duplicate = employees.find(
+      (emp) =>
+        emp.id !== editEmpModal.id &&
+        emp.loginId.trim().toLowerCase() === cleanLoginId.toLowerCase()
+    );
+    if (duplicate) {
+      setEditError(`이미 '${duplicate.name}' 계정에서 사용 중인 로그인 ID('${cleanLoginId}')입니다.`);
+      return;
+    }
+
+    setIsSavingEdit(true);
+    try {
+      const cleanedEmp: Employee = {
+        ...editEmpModal,
+        loginId: cleanLoginId,
+        password: cleanPassword,
+        name: cleanName,
+        position: cleanPosition || '직원',
+        manualBaseGrantedDays:
+          editEmpModal.calculationMode === 'MANUAL'
+            ? Number(editEmpModal.manualBaseGrantedDays ?? 15)
+            : undefined,
+      };
+      await onUpdateEmployee(cleanedEmp);
+      setEditEmpModal(null);
+    } catch (err: any) {
+      setEditError(err?.message || '직원 정보 및 비밀번호 저장 중 오류가 발생했습니다.');
+    } finally {
+      setIsSavingEdit(false);
+    }
   };
 
   const handleConfirmRetire = () => {
@@ -588,24 +647,19 @@ export const AdminEmployeeList: React.FC<AdminEmployeeListProps> = ({
                         </button>
 
                         <button
-                          onClick={() => setEditEmpModal(emp)}
+                          onClick={() => {
+                            setEditError('');
+                            setEditEmpModal({
+                              ...emp,
+                              password: emp.password || (emp.role === 'ADMIN' ? '0410' : '1234'),
+                            });
+                          }}
                           className="px-2 py-1 text-[11px] font-semibold bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg border border-blue-200 transition-colors flex items-center space-x-1 cursor-pointer"
-                          title="정보 수정"
+                          title="직원 정보 및 비밀번호 수정"
                         >
                           <Edit3 className="w-3 h-3" />
                           <span>수정</span>
                         </button>
-
-                        {onOpenPasswordChange && (
-                          <button
-                            onClick={() => onOpenPasswordChange(emp)}
-                            className="px-2 py-1 text-[11px] font-semibold bg-amber-50 hover:bg-amber-100 text-amber-900 rounded-lg border border-amber-200 transition-colors flex items-center space-x-1 cursor-pointer"
-                            title="비밀번호 즉시 변경"
-                          >
-                            <Key className="w-3 h-3 text-amber-600" />
-                            <span>비번</span>
-                          </button>
-                        )}
 
                         {emp.status === 'RETIRED' ? (
                           <button
@@ -772,6 +826,12 @@ export const AdminEmployeeList: React.FC<AdminEmployeeListProps> = ({
             </div>
 
             <form onSubmit={handleCreateEmployee} className="p-6 space-y-4">
+              {addError && (
+                <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-xs font-bold flex items-center space-x-2">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                  <span>{addError}</span>
+                </div>
+              )}
               {/* Account Credentials */}
               <div className="bg-blue-50/60 p-4 rounded-2xl border border-blue-100 space-y-3">
                 <div className="flex items-center space-x-1.5 text-xs font-bold text-blue-900">
@@ -978,25 +1038,33 @@ export const AdminEmployeeList: React.FC<AdminEmployeeListProps> = ({
             </div>
 
             <form onSubmit={handleSaveEdit} className="p-6 space-y-4">
+              {editError && (
+                <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-xs font-bold flex items-center space-x-2">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                  <span>{editError}</span>
+                </div>
+              )}
               {/* Account ID / Password */}
               <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200 grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-slate-700 mb-1">로그인 ID</label>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">로그인 ID *</label>
                   <input
                     type="text"
                     required
-                    value={editEmpModal.loginId}
+                    value={editEmpModal.loginId ?? ''}
                     onChange={(e) => setEditEmpModal({ ...editEmpModal, loginId: e.target.value })}
-                    className="w-full text-xs bg-white border border-slate-200 rounded-xl px-3 py-2 font-mono font-bold text-slate-800"
+                    className="w-full text-xs bg-white border border-slate-200 rounded-xl px-3 py-2 font-mono font-bold text-slate-800 focus:ring-2 focus:ring-blue-500 outline-hidden"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-slate-700 mb-1">비밀번호 변경</label>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">비밀번호 변경 *</label>
                   <input
                     type="text"
-                    value={editEmpModal.password || '1234'}
+                    required
+                    value={editEmpModal.password ?? ''}
                     onChange={(e) => setEditEmpModal({ ...editEmpModal, password: e.target.value })}
-                    className="w-full text-xs bg-white border border-slate-200 rounded-xl px-3 py-2 font-medium"
+                    placeholder="새 비밀번호 입력"
+                    className="w-full text-xs bg-white border border-slate-200 rounded-xl px-3 py-2 font-bold text-slate-900 focus:ring-2 focus:ring-blue-500 outline-hidden"
                   />
                 </div>
               </div>
@@ -1046,7 +1114,7 @@ export const AdminEmployeeList: React.FC<AdminEmployeeListProps> = ({
                 <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
-                    onClick={() => setEditEmpModal({ ...editEmpModal, calculationMode: 'AUTO' })}
+                    onClick={() => setEditEmpModal({ ...editEmpModal, calculationMode: 'AUTO', manualBaseGrantedDays: undefined })}
                     className={`p-2.5 rounded-xl text-left border text-xs font-bold transition-all cursor-pointer ${
                       editEmpModal.calculationMode !== 'MANUAL'
                         ? 'bg-blue-50 border-blue-500 text-blue-900 ring-2 ring-blue-500/20'
@@ -1113,15 +1181,17 @@ export const AdminEmployeeList: React.FC<AdminEmployeeListProps> = ({
                 <button
                   type="button"
                   onClick={() => setEditEmpModal(null)}
-                  className="px-4 py-2.5 text-xs font-semibold rounded-xl border border-slate-200 text-slate-700 hover:bg-slate-50 cursor-pointer"
+                  disabled={isSavingEdit}
+                  className="px-4 py-2.5 text-xs font-semibold rounded-xl border border-slate-200 text-slate-700 hover:bg-slate-50 cursor-pointer disabled:opacity-50"
                 >
                   취소
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2.5 text-xs font-bold rounded-xl bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white shadow-md shadow-blue-600/20 cursor-pointer"
+                  disabled={isSavingEdit}
+                  className="px-5 py-2.5 text-xs font-bold rounded-xl bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white shadow-md shadow-blue-600/20 cursor-pointer disabled:opacity-50"
                 >
-                  수정 사항 저장
+                  {isSavingEdit ? '저장 중...' : '수정 사항 저장'}
                 </button>
               </div>
             </form>

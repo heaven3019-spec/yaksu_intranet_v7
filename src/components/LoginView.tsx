@@ -39,13 +39,18 @@ export const LoginView: React.FC<LoginViewProps> = ({ employees, onLoginSuccess 
       try {
         const cloudData = await fetchAllFromFirestore();
         if (cloudData && Array.isArray(cloudData.employees) && cloudData.employees.length > 0) {
-          const cloudTarget = cloudData.employees.find(
+          const cloudCandidates = cloudData.employees.filter(
             (emp) => emp.loginId.trim().toLowerCase() === cleanId.toLowerCase()
           );
-          if (cloudTarget) {
-            const correctPassword = (cloudTarget.password || '1234').trim();
-            if (cleanPw === correctPassword) {
-              onLoginSuccess(cloudTarget, cloudData.employees, cloudData.requests);
+          if (cloudCandidates.length > 0) {
+            const matchedTarget = cloudCandidates.find((emp) => {
+              const expected = String(emp.password || (emp.role === 'ADMIN' ? '0410' : '1234')).trim();
+              return cleanPw === expected;
+            });
+            if (matchedTarget) {
+              // Sync server session token silently in background
+              authenticateWithServer(cleanId, cleanPw).catch(() => {});
+              onLoginSuccess(matchedTarget, cloudData.employees, cloudData.requests);
               return;
             } else {
               setErrorMsg('비밀번호가 일치하지 않습니다. 다시 입력해주세요.');
@@ -59,14 +64,18 @@ export const LoginView: React.FC<LoginViewProps> = ({ employees, onLoginSuccess 
       }
 
       // 2. Fallback: check in-memory employees state
-      const memoryTarget = employees.find(
+      const memoryCandidates = employees.filter(
         (emp) => emp.loginId.trim().toLowerCase() === cleanId.toLowerCase()
       );
 
-      if (memoryTarget) {
-        const correctPassword = (memoryTarget.password || '1234').trim();
-        if (cleanPw === correctPassword) {
-          onLoginSuccess(memoryTarget);
+      if (memoryCandidates.length > 0) {
+        const matchedMemory = memoryCandidates.find((emp) => {
+          const expected = String(emp.password || (emp.role === 'ADMIN' ? '0410' : '1234')).trim();
+          return cleanPw === expected;
+        });
+        if (matchedMemory) {
+          authenticateWithServer(cleanId, cleanPw).catch(() => {});
+          onLoginSuccess(matchedMemory);
           return;
         } else {
           setErrorMsg('비밀번호가 일치하지 않습니다. 다시 입력해주세요.');
