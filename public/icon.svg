@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2563eb" />
+      <stop offset="100%" stop-color="#1e40af" />
+    </linearGradient>
+    <linearGradient id="cardGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" />
+      <stop offset="100%" stop-color="#eff6ff" />
+    </linearGradient>
+  </defs>
+  <!-- Background tile -->
+  <rect width="512" height="512" rx="112" fill="url(#bgGrad)" />
+  <!-- Calendar Card -->
+  <rect x="88" y="106" width="336" height="314" rx="44" fill="url(#cardGrad)" />
+  <!-- Calendar Header -->
+  <rect x="88" y="106" width="336" height="84" rx="44" fill="#1d4ed8" />
+  <rect x="88" y="148" width="336" height="42" fill="#1d4ed8" />
+  <!-- Calendar Binding Rings -->
+  <rect x="158" y="74" width="32" height="62" rx="16" fill="#93c5fd" />
+  <rect x="322" y="74" width="32" height="62" rx="16" fill="#93c5fd" />
+  <!-- Stylized Calendar Grid / Schedule Lines -->
+  <rect x="136" y="226" width="92" height="32" rx="12" fill="#bfdbfe" />
+  <rect x="248" y="226" width="128" height="32" rx="12" fill="#dbeafe" />
+  <rect x="136" y="278" width="160" height="32" rx="12" fill="#3b82f6" />
+  <rect x="136" y="330" width="116" height="32" rx="12" fill="#bfdbfe" />
+  <!-- Emerald Approval Badge -->
+  <circle cx="372" cy="362" r="64" fill="#10b981" stroke="#ffffff" stroke-width="14" />
+  <path d="M343 362 L364 383 L404 341" fill="none" stroke="#ffffff" stroke-width="16" stroke-linecap="round" stroke-linejoin="round" />
+</svg>

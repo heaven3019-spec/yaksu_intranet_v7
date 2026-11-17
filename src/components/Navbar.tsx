@@ -1,13 +1,10 @@
 import React from 'react';
-import { Employee } from '../types';
+import { Employee, LeaveRequest } from '../types';
 import { 
-  Building2, 
   Calendar, 
-  Clock, 
   User, 
   ShieldCheck, 
   Users, 
-  CalendarDays, 
   RotateCcw,
   FileText,
   LogOut,
@@ -15,9 +12,13 @@ import {
   UserCheck,
   RefreshCw
 } from 'lucide-react';
+import { PWAInstallButton } from './PWAInstallButton';
+import { AdminNotificationControl } from './AdminNotificationCenter';
 
 interface NavbarProps {
   currentEmployee: Employee;
+  employees: Employee[];
+  requests: LeaveRequest[];
   activeTab: string;
   onChangeTab: (tab: string) => void;
   pendingCount: number;
@@ -25,10 +26,13 @@ interface NavbarProps {
   onResetData: () => void;
   onManualSync?: () => void;
   isSyncing?: boolean;
+  onShowToast?: (text: string, type: 'success' | 'info' | 'error') => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
   currentEmployee,
+  employees,
+  requests,
   activeTab,
   onChangeTab,
   pendingCount,
@@ -36,6 +40,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onResetData,
   onManualSync,
   isSyncing,
+  onShowToast,
 }) => {
   const isAdmin = currentEmployee.role === 'ADMIN';
 
@@ -64,15 +69,26 @@ export const Navbar: React.FC<NavbarProps> = ({
                 동작구립 약수데이케어센터
               </h1>
             </div>
-            {onManualSync && (
-              <button
-                onClick={onManualSync}
-                className="p-1.5 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-lg border border-emerald-200 transition-colors"
-                title="새로고침"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 text-emerald-600 ${isSyncing ? 'animate-spin' : ''}`} />
-              </button>
-            )}
+            <div className="flex items-center space-x-1.5">
+              <PWAInstallButton variant="compact" />
+              {isAdmin && (
+                <AdminNotificationControl
+                  employees={employees}
+                  requests={requests}
+                  compact
+                  onFeedback={onShowToast}
+                />
+              )}
+              {onManualSync && (
+                <button
+                  onClick={onManualSync}
+                  className="p-1.5 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-lg border border-emerald-200 transition-colors"
+                  title="새로고침"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 text-emerald-600 ${isSyncing ? 'animate-spin' : ''}`} />
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Line 2 (Enter / 줄바꿈): Employee Name & Big Easy Logout Button */}
@@ -141,6 +157,16 @@ export const Navbar: React.FC<NavbarProps> = ({
 
           {/* Right Section: User Profile, Live Sync Status & Logout */}
           <div className="flex items-center space-x-2 sm:space-x-3">
+            <PWAInstallButton variant="compact" />
+
+            {isAdmin && (
+              <AdminNotificationControl
+                employees={employees}
+                requests={requests}
+                onFeedback={onShowToast}
+              />
+            )}
+
             {/* Live Sync Status Indicator & Manual Sync Button */}
             {onManualSync && (
               <button

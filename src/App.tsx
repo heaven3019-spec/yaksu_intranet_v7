@@ -48,7 +48,15 @@ import { LeaveRequestModal } from './components/LeaveRequestModal';
 import { LeaveDocumentPrintModal } from './components/LeaveDocumentPrintModal';
 import { ExcelImportModal } from './components/ExcelImportModal';
 import { AdminDirectLeaveModal } from './components/AdminDirectLeaveModal';
-import { CheckCircle2, AlertCircle, X, FileText } from 'lucide-react';
+import { OfflineIndicator } from './components/OfflineIndicator';
+import {
+  checkAndTriggerDailyTomorrowLeaveNotification,
+  notifyNewLeaveRequestsForAdmin,
+  getNotificationPermission,
+  isAdminNotificationEnabled,
+  requestAdminNotificationPermission,
+} from './utils/adminNotifications';
+import { CheckCircle2, AlertCircle, X, FileText, Bell } from 'lucide-react';
 
 export default function App() {
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -78,6 +86,16 @@ export default function App() {
   const requestsRef = useRef<LeaveRequest[]>([]);
   const employeesRef = useRef<Employee[]>([]);
   const currentUserIdRef = useRef<string | null>(null);
+  const knownPendingIdsRef = useRef<Set<string>>(new Set());
+  const hasInitializedPendingTrackerRef = useRef<boolean>(false);
+  const [adminBannerDismissed, setAdminBannerDismissed] = useState<boolean>(() => {
+    try {
+      return sessionStorage.getItem('yaksoo_admin_notif_banner_dismissed') === '1';
+    } catch {
+      return false;
+    }
+  });
+  const [notifStateTick, setNotifStateTick] = useState(0);
 
   useEffect(() => {
     requestsRef.current = requests;
@@ -389,6 +407,75 @@ export default function App() {
     };
   }, [syncWithServer, showToast]);
 
+  // Admin-Only System/Lock-Screen Notification Scheduler (Daily 09:30 AM Tomorrow's Leave List + Instant New Leave Request Alert)
+  const activeLoggedEmployee = employees.find((e) => e.id === currentUserId);
+  const activeLoggedIsAdmin = activeLoggedEmployee?.role === 'ADMIN';
+
+  // Reset pending tracker when logged out or non-admin
+  useEffect(() => {
+    if (!isInitialized || !activeLoggedIsAdmin) {
+      hasInitializedPendingTrackerRef.current = false;
+      knownPendingIdsRef.current = new Set();
+    }
+  }, [isInitialized, activeLoggedIsAdmin, currentUserId]);
+
+  // Detect newly arrived PENDING leave requests (Admin only) and fire system notification
+  useEffect(() => {
+    if (!isInitialized || !activeLoggedIsAdmin) return;
+
+    const currentPending = requests.filter((r) => r.status === 'PENDING');
+
+    if (!hasInitializedPendingTrackerRef.current) {
+      knownPendingIdsRef.current = new Set(currentPending.map((r) => r.id));
+      hasInitializedPendingTrackerRef.current = true;
+      return;
+    }
+
+    const newlyArrived = currentPending.filter((r) => !knownPendingIdsRef.current.has(r.id));
+    if (newlyArrived.length > 0) {
+      currentPending.forEach((r) => knownPendingIdsRef.current.add(r.id));
+      notifyNewLeaveRequestsForAdmin(newlyArrived).catch(() => {});
+    } else {
+      // Keep known set updated so cancelled/approved IDs can be tracked cleanly
+      knownPendingIdsRef.current = new Set(currentPending.map((r) => r.id));
+    }
+  }, [requests, isInitialized, activeLoggedIsAdmin]);
+
+  // Daily 09:30 AM Tomorrow's Leave List Notification (Admin only)
+  useEffect(() => {
+    if (!isInitialized || !activeLoggedIsAdmin) return;
+
+    const checkDaily = () => {
+      checkAndTriggerDailyTomorrowLeaveNotification(requestsRef.current, employeesRef.current).catch(() => {});
+    };
+
+    checkDaily();
+    const intervalId = window.setInterval(checkDaily, 30 * 1000);
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        checkDaily();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [isInitialized, activeLoggedIsAdmin, notifStateTick]);
+
+  // Focus approval tab when Admin taps a system notification
+  useEffect(() => {
+    if (!activeLoggedIsAdmin || typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
+    const onSwMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'NOTIFICATION_CLICKED') {
+        setActiveTab('approval');
+      }
+    };
+    navigator.serviceWorker.addEventListener('message', onSwMessage);
+    return () => navigator.serviceWorker.removeEventListener('message', onSwMessage);
+  }, [activeLoggedIsAdmin]);
+
   // Sync to localStorage and backend
   const updateEmployees = (newEmps: Employee[]) => {
     setEmployees(newEmps);
@@ -623,6 +710,7 @@ export default function App() {
     };
 
     const newReqs = [newReq, ...requests];
+    knownPendingIdsRef.current.add(newReq.id);
     updateRequests(newReqs);
 
     try {
@@ -979,11 +1067,21 @@ export default function App() {
     showToast('보안 감사 완료: 비인가 데이터 정화 및 최신 데이터 동기화가 완료되었습니다.', 'info');
   };
 
+  const showAdminNotifPromptBanner =
+    isAdmin &&
+    !adminBannerDismissed &&
+    getNotificationPermission() !== 'unsupported' &&
+    !isAdminNotificationEnabled();
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans selection:bg-blue-600 selection:text-white">
+      <OfflineIndicator />
+
       {/* Top Navigation with Auth state and tabs */}
       <Navbar
         currentEmployee={currentEmployee}
+        employees={employees}
+        requests={requests}
         activeTab={activeTab}
         onChangeTab={setActiveTab}
         pendingCount={pendingCount}
@@ -991,7 +1089,48 @@ export default function App() {
         onResetData={handleResetData}
         onManualSync={handleManualSync}
         isSyncing={isSyncing}
+        onShowToast={showToast}
       />
+
+      {/* Admin-Only First-Time Notification Setup Banner */}
+      {showAdminNotifPromptBanner && (
+        <div className="bg-blue-50 border-b border-blue-200 px-4 py-2.5">
+          <div className="max-w-7xl mx-auto flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+            <div className="flex items-start sm:items-center space-x-2 text-xs text-blue-900">
+              <Bell className="w-4 h-4 text-blue-600 shrink-0 mt-0.5 sm:mt-0" />
+              <span>
+                <strong>관리자 전용 잠금화면 알림:</strong> 새 연차 신청 즉시 알림 &amp; 매일 오전 9:30 내일의 연차 리스트 알림을 받으려면 알림을 허용해주세요.
+              </span>
+            </div>
+            <div className="flex items-center space-x-2 self-end sm:self-auto shrink-0">
+              <button
+                type="button"
+                onClick={async () => {
+                  const res = await requestAdminNotificationPermission();
+                  setNotifStateTick((t) => t + 1);
+                  showToast(res.message, res.granted ? 'success' : 'error');
+                }}
+                className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold cursor-pointer shadow-2xs"
+              >
+                알림 허용하기
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setAdminBannerDismissed(true);
+                  try {
+                    sessionStorage.setItem('yaksoo_admin_notif_banner_dismissed', '1');
+                  } catch {}
+                }}
+                className="p-1 text-blue-600 hover:text-blue-900 rounded-lg cursor-pointer"
+                title="닫기"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">

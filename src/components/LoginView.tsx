@@ -3,6 +3,8 @@ import { Employee, LeaveRequest } from '../types';
 import { Lock, User, ShieldCheck, KeyRound, ArrowRight, AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
 import { authenticateWithServer } from '../utils/storage';
 import { fetchAllFromFirestore } from '../lib/firebase';
+import { PWAInstallButton } from './PWAInstallButton';
+import { OfflineIndicator } from './OfflineIndicator';
 
 interface LoginViewProps {
   employees: Employee[];
@@ -106,7 +108,9 @@ export const LoginView: React.FC<LoginViewProps> = ({ employees, onLoginSuccess 
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-blue-950 flex flex-col justify-center py-12 sm:px-6 lg:px-8 font-sans">
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-blue-950 flex flex-col font-sans">
+      <OfflineIndicator />
+      <div className="flex-1 flex flex-col justify-center py-12 sm:px-6 lg:px-8">
       <div className="sm:mx-auto sm:w-full sm:max-w-md px-4">
         {/* Organization Badge & Logo */}
         <div className="text-center mb-6">
@@ -202,6 +206,9 @@ export const LoginView: React.FC<LoginViewProps> = ({ employees, onLoginSuccess 
           </form>
         </div>
 
+        {/* PWA Install Button for Galaxy / Mobile */}
+        <PWAInstallButton variant="login" />
+
         {/* Security & Privacy Notice */}
         <div className="mt-6 text-center text-xs text-blue-200/60 leading-relaxed px-4">
           <p className="flex items-center justify-center space-x-1 font-medium">
@@ -212,6 +219,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ employees, onLoginSuccess 
             일반 직원은 오직 본인의 연차 현황 및 신청 내역만 조회 가능하며, 타 직원의 정보 및 관리자 기능은 철저히 보호됩니다.
           </p>
         </div>
+      </div>
       </div>
     </div>
   );
