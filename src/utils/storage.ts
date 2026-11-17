@@ -155,12 +155,19 @@ export async function postSingleRequestToServer(newReq: LeaveRequest) {
         method: 'POST',
         headers,
         body: JSON.stringify(newReq),
-      }, 5000);
+      }, 4500);
 
       if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        const err = new Error(errData.error || '연차 신청 서버 접수에 실패했습니다.');
-        if (res.status >= 400 && res.status < 500) {
+        const contentType = res.headers.get('content-type') || '';
+        const errData = contentType.includes('application/json')
+          ? await res.json().catch(() => null)
+          : null;
+        const msg = errData && typeof errData.error === 'string' && errData.error.trim()
+          ? errData.error.trim()
+          : '';
+        const err = new Error(msg || '연차 신청 서버 접수에 실패했습니다.');
+        // Only abort on explicit JSON business validation errors from our Express API (400/403/409)
+        if (msg && (res.status === 400 || res.status === 403 || res.status === 409)) {
           validationError = err;
         }
         throw err;
@@ -194,7 +201,7 @@ export async function patchRequestOnServer(requestId: string, updates: Partial<L
       method: 'PATCH',
       headers,
       body: JSON.stringify(updates),
-    }, 5000).catch((e) => console.warn('Server patch request warning:', e));
+    }, 4500).catch((e) => console.warn('Server patch request warning:', e));
 
     notifyBroadcastChannel('REQUEST_UPDATED', { id: requestId, updates });
   } catch (err) {
@@ -207,7 +214,7 @@ export async function deleteRequestOnServer(requestId: string) {
   try {
     await fetchWithTimeout(`/api/requests/${requestId}`, {
       method: 'DELETE',
-    }, 5000).catch((e) => console.warn('Server delete request warning:', e));
+    }, 4500).catch((e) => console.warn('Server delete request warning:', e));
 
     notifyBroadcastChannel('REQUEST_DELETED', { id: requestId });
   } catch (err) {
@@ -222,7 +229,7 @@ export async function bulkDeleteRequestsOnServer(requestIds: string[]) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ requestIds }),
-    }, 5000).catch((e) => console.warn('Server bulk delete warning:', e));
+    }, 4500).catch((e) => console.warn('Server bulk delete warning:', e));
 
     notifyBroadcastChannel('REQUESTS_BULK_DELETED', { requestIds });
   } catch (err) {
@@ -237,7 +244,7 @@ export async function changePasswordOnServer(employeeId: string, newPassword: st
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ employeeId, newPassword }),
-    }, 5000);
+    }, 4500);
     if (res.ok) {
       notifyBroadcastChannel('PASSWORD_CHANGED', { employeeId });
       return true;
@@ -254,9 +261,9 @@ export async function postSingleEmployeeToServer(newEmp: Employee) {
   let firestoreSaved = false;
   let serverSaved = false;
   let validationError: Error | null = null;
-  let lastError: Error | null = null;
 
-  const token = getAdminToken() || 'adm_master_session_default';
+  const rawToken = getAdminToken();
+  const token = rawToken && rawToken.startsWith('adm_master_session_') ? rawToken : 'adm_master_session_default';
 
   const serverPromise = (async () => {
     const res = await fetchWithTimeout('/api/employees', {
@@ -266,31 +273,35 @@ export async function postSingleEmployeeToServer(newEmp: Employee) {
         'x-admin-token': token,
       },
       body: JSON.stringify(newEmp),
-    }, 5000);
+    }, 4500);
 
     if (!res.ok) {
-      const errData = await res.json().catch(() => ({}));
-      const err = new Error(errData.error || '직원 정보 서버 저장에 실패했습니다.');
-      if (res.status >= 400 && res.status < 500) {
+      const contentType = res.headers.get('content-type') || '';
+      const errData = contentType.includes('application/json')
+        ? await res.json().catch(() => null)
+        : null;
+      const msg = errData && typeof errData.error === 'string' && errData.error.trim()
+        ? errData.error.trim()
+        : '';
+      const err = new Error(msg || '직원 정보 서버 저장에 실패했습니다.');
+      // Only treat explicit JSON 400/403/409 validation errors from Express as hard validation failures
+      if (msg && (res.status === 400 || res.status === 403 || res.status === 409)) {
         validationError = err;
       }
       throw err;
     }
     serverSaved = true;
   })().catch((err: any) => {
-    console.warn('[Storage] Direct employee server post error:', err);
-    lastError = err instanceof Error ? err : new Error(String(err));
+    console.warn('[Storage] Direct employee server post warning:', err);
     throw err;
   });
 
-  // Wait for backend validation first if fast, while starting Firestore save in parallel
   const firestorePromise = saveEmployeeToFirestore(newEmp)
     .then(() => {
       firestoreSaved = true;
     })
     .catch((err: any) => {
       console.error('[Storage] Firestore direct employee write error:', err);
-      lastError = err instanceof Error ? err : new Error(String(err));
       throw err;
     });
 
@@ -301,7 +312,7 @@ export async function postSingleEmployeeToServer(newEmp: Employee) {
   }
 
   if (!firestoreSaved && !serverSaved) {
-    throw lastError || new Error('서버 및 클라우드 저장에 실패했습니다. 잠시 후 다시 시도해주세요.');
+    throw new Error('클라우드 및 서버 연결에 실패했습니다. 네트워크 상태를 확인 후 다시 시도해주세요.');
   }
 
   notifyBroadcastChannel('EMPLOYEE_UPDATED', newEmp);

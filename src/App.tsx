@@ -142,13 +142,13 @@ export default function App() {
         }
       }
 
-      if (reqsChanged) {
+      if (reqsChanged && (serverData.requests.length > 0 || prevReqs.length === 0)) {
         setRequests(serverData.requests);
         try {
           localStorage.setItem('hr_intranet_requests_v3', JSON.stringify(serverData.requests));
         } catch {}
       }
-      if (empsChanged) {
+      if (empsChanged && serverData.employees.length >= prevEmps.length) {
         setEmployees(serverData.employees);
         try {
           localStorage.setItem('hr_intranet_employees_v3', JSON.stringify(serverData.employees));
@@ -873,8 +873,13 @@ export default function App() {
     const target = employees.find((e) => e.id === empId);
     const newEmps = employees.filter((e) => e.id !== empId);
     const newReqs = requests.filter((r) => r.employeeId !== empId);
-    updateEmployees(newEmps);
-    updateRequests(newReqs);
+    setEmployees(newEmps);
+    setRequests(newReqs);
+    saveLocalEmployeesOnly(newEmps);
+    try {
+      localStorage.setItem('hr_intranet_requests_v3', JSON.stringify(newReqs));
+    } catch {}
+    syncToServer(newEmps, newReqs, true).catch(() => {});
     try {
       await deleteEmployeeFromFirestore(empId);
       const targetReqs = requests.filter((r) => r.employeeId === empId);
@@ -949,13 +954,17 @@ export default function App() {
       if (cloudData && cloudData.employees && cloudData.employees.length > 0) {
         setEmployees(cloudData.employees);
         setRequests(cloudData.requests || []);
-        saveStoredEmployees(cloudData.employees);
-        saveStoredRequests(cloudData.requests || []);
+        saveLocalEmployeesOnly(cloudData.employees);
+        try {
+          localStorage.setItem('hr_intranet_requests_v3', JSON.stringify(cloudData.requests || []));
+        } catch {}
+        await syncToServer(cloudData.employees, cloudData.requests || [], true);
+      } else {
+        await syncWithServer(false);
       }
     } catch (e) {
       console.warn('Firestore manual fetch warning:', e);
     }
-    await syncWithServer(false);
     setTimeout(() => {
       setIsSyncing(false);
     }, 600);

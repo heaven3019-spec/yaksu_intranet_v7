@@ -4,7 +4,7 @@
       "id": "admin-001",
       "loginId": "admin",
       "password": "0410",
-      "name": "유과장님",
+      "name": "유정",
       "position": "센터운영과장 (관리자)",
       "department": "센터운영본부",
       "email": "yu.admin@yaksoo.kr",
@@ -18,5 +18,7 @@
       "customNotes": "동작구립 약수데이케어센터 연차 결재 및 전사 인사 관리 총괄"
     }
   ],
-  "requests": []
+  "requests": [],
+  "lastSyncedAt": "2026-11-17T07:14:04.462Z",
+  "version": 1794899644462
 }

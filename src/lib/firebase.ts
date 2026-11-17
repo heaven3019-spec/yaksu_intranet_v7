@@ -1,10 +1,12 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
+import { getAuth } from 'firebase/auth';
 import { 
   getFirestore,
   initializeFirestore,
   collection, 
   doc, 
   setDoc, 
+  getDocFromServer,
   getDocs, 
   onSnapshot, 
   writeBatch,
@@ -42,7 +44,78 @@ try {
 }
 export const db = dbInstance;
 
-function withFirestoreTimeout<T>(promise: Promise<T>, timeoutMs = 4500, label = 'Firestore'): Promise<T> {
+let authInstance: ReturnType<typeof getAuth> | null = null;
+try {
+  authInstance = getAuth(app);
+} catch {
+  authInstance = null;
+}
+
+export enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+export interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
+    emailVerified?: boolean | null;
+    isAnonymous?: boolean | null;
+    tenantId?: string | null;
+    providerInfo?: {
+      providerId?: string | null;
+      email?: string | null;
+    }[];
+  };
+}
+
+export function handleFirestoreError(
+  error: unknown,
+  operationType: OperationType,
+  path: string | null
+): never {
+  const currentUser = authInstance?.currentUser;
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: currentUser?.uid ?? null,
+      email: currentUser?.email ?? null,
+      emailVerified: currentUser?.emailVerified ?? null,
+      isAnonymous: currentUser?.isAnonymous ?? null,
+      tenantId: currentUser?.tenantId ?? null,
+      providerInfo:
+        currentUser?.providerData?.map((provider) => ({
+          providerId: provider.providerId,
+          email: provider.email,
+        })) || [],
+    },
+    operationType,
+    path,
+  };
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
+
+async function testConnection() {
+  try {
+    await getDocFromServer(doc(db, 'test', 'connection'));
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('the client is offline')) {
+      console.error('Please check your Firebase configuration.');
+    }
+  }
+}
+testConnection();
+
+function withFirestoreTimeout<T>(promise: Promise<T>, timeoutMs = 6500, label = 'Firestore'): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => {
       reject(new Error(`${label} 응답 시간이 초과되었습니다.`));
@@ -93,11 +166,10 @@ export async function saveEmployeeToFirestore(employee: Employee): Promise<void>
   try {
     const docRef = doc(db, EMPLOYEES_COLLECTION, employee.id);
     const cleanData = sanitizeForFirestore(employee);
-    await withFirestoreTimeout(setDoc(docRef, cleanData, { merge: true }), 4500, '직원 정보 저장');
+    await withFirestoreTimeout(setDoc(docRef, cleanData, { merge: true }), 6500, '직원 정보 저장');
     console.log('[Firestore] Successfully saved employee:', employee.id, employee.loginId);
   } catch (err) {
-    console.error('[Firestore] Error saving employee to Firestore:', err);
-    throw err;
+    handleFirestoreError(err, OperationType.WRITE, `${EMPLOYEES_COLLECTION}/${employee.id}`);
   }
 }
 
@@ -107,11 +179,10 @@ export async function saveEmployeeToFirestore(employee: Employee): Promise<void>
 export async function deleteEmployeeFromFirestore(employeeId: string): Promise<void> {
   try {
     const docRef = doc(db, EMPLOYEES_COLLECTION, employeeId);
-    await deleteDoc(docRef);
+    await withFirestoreTimeout(deleteDoc(docRef), 6500, '직원 삭제');
     console.log('[Firestore] Successfully deleted employee:', employeeId);
   } catch (err) {
-    console.error('[Firestore] Error deleting employee from Firestore:', err);
-    throw err;
+    handleFirestoreError(err, OperationType.DELETE, `${EMPLOYEES_COLLECTION}/${employeeId}`);
   }
 }
 
@@ -130,11 +201,10 @@ export async function saveLeaveRequestToFirestore(request: LeaveRequest): Promis
   try {
     const docRef = doc(db, REQUESTS_COLLECTION, request.id);
     const cleanData = sanitizeForFirestore(request);
-    await withFirestoreTimeout(setDoc(docRef, cleanData, { merge: true }), 4500, '연차 신청 저장');
+    await withFirestoreTimeout(setDoc(docRef, cleanData, { merge: true }), 6500, '연차 신청 저장');
     console.log('[Firestore] Successfully saved leave request:', request.id);
   } catch (err) {
-    console.error('[Firestore] Error saving leave request to Firestore:', err);
-    throw err;
+    handleFirestoreError(err, OperationType.WRITE, `${REQUESTS_COLLECTION}/${request.id}`);
   }
 }
 
@@ -144,11 +214,10 @@ export async function saveLeaveRequestToFirestore(request: LeaveRequest): Promis
 export async function deleteLeaveRequestToFirestore(requestId: string): Promise<void> {
   try {
     const docRef = doc(db, REQUESTS_COLLECTION, requestId);
-    await withFirestoreTimeout(deleteDoc(docRef), 4500, '연차 삭제');
+    await withFirestoreTimeout(deleteDoc(docRef), 6500, '연차 삭제');
     console.log('[Firestore] Successfully deleted leave request:', requestId);
   } catch (err) {
-    console.error('[Firestore] Error deleting leave request from Firestore:', err);
-    throw err;
+    handleFirestoreError(err, OperationType.DELETE, `${REQUESTS_COLLECTION}/${requestId}`);
   }
 }
 
