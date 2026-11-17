@@ -1,10 +1,8 @@
 import { Employee, LeaveRequest } from '../types';
 import { 
   saveEmployeeToFirestore,
-  deleteEmployeeFromFirestore,
   saveLeaveRequestToFirestore, 
-  deleteLeaveRequestToFirestore,
-  syncEmployeesToFirestore, 
+  syncEmployeesToFirestore,
   syncRequestsToFirestore,
   fetchAllFromFirestore,
   cleanupFirestoreUnauthorizedData
@@ -90,14 +88,6 @@ export async function syncToServer(employees?: Employee[], requests?: LeaveReque
              !r.id?.startsWith('req-today-') &&
              r.id !== 'req-1786779464228'
     );
-
-    // Cloud Firestore Sync
-    if (cleanEmps && cleanEmps.length > 0) {
-      syncEmployeesToFirestore(cleanEmps).catch((e) => console.warn('Firestore emp sync:', e));
-    }
-    if (cleanReqs && cleanReqs.length > 0) {
-      syncRequestsToFirestore(cleanReqs).catch((e) => console.warn('Firestore req sync:', e));
-    }
 
     const payload: any = { forceOverwrite };
     if (cleanEmps) payload.employees = cleanEmps;
@@ -185,7 +175,7 @@ export async function postSingleRequestToServer(newReq: LeaveRequest) {
     throw validationError;
   }
   if (!firestoreSaved && !serverSaved) {
-    throw new Error('서버 및 클라우드 연결에 실패했습니다. 네트워크 상태를 확인 후 다시 시도해주세요.');
+    throw new Error('클라우드 일일 쓰기 한도 초과 또는 서버 연결 지연으로 저장에 실패했습니다. 네트워크 상태를 확인하거나 잠시 후 다시 시도해주세요.');
   }
   notifyBroadcastChannel('NEW_REQUEST_SUBMITTED', newReq);
 }
@@ -312,7 +302,7 @@ export async function postSingleEmployeeToServer(newEmp: Employee) {
   }
 
   if (!firestoreSaved && !serverSaved) {
-    throw new Error('클라우드 및 서버 연결에 실패했습니다. 네트워크 상태를 확인 후 다시 시도해주세요.');
+    throw new Error('클라우드 일일 쓰기 한도 초과 또는 서버 연결에 실패했습니다. 잠시 후 다시 시도해주세요.');
   }
 
   notifyBroadcastChannel('EMPLOYEE_UPDATED', newEmp);
@@ -470,7 +460,6 @@ export function saveStoredEmployees(employees: Employee[]) {
   try {
     const clean = employees.filter((e) => !MOCK_EMP_IDS.has(e.id) && !MOCK_LOGIN_IDS.has(e.loginId?.toLowerCase()) && e.name !== '테스트계정');
     localStorage.setItem(EMPLOYEES_KEY, JSON.stringify(clean));
-    syncEmployeesToFirestore(clean).catch((e) => console.warn('Firestore employee sync error:', e));
     const reqs = getStoredRequests();
     syncToServer(clean, reqs);
   } catch (e) {
@@ -514,6 +503,29 @@ export function getStoredRequests(): LeaveRequest[] {
   }
 }
 
+export function saveLocalRequestsOnly(requests: LeaveRequest[]) {
+  try {
+    const currentEmps = getStoredEmployees();
+    const validEmpIds = new Set(currentEmps.map((e) => e.id));
+    validEmpIds.add('admin-001');
+
+    const clean = requests.filter(
+      (r) =>
+        !MOCK_EMP_IDS.has(r.employeeId) &&
+        r.employeeName !== '유하늘' &&
+        validEmpIds.has(r.employeeId) &&
+        r.id !== 'req-1786779464228' &&
+        !r.id?.startsWith('req-10') &&
+        !r.id?.startsWith('req-20') &&
+        !r.id?.startsWith('req-30') &&
+        !r.id?.startsWith('req-today-')
+    );
+    localStorage.setItem(REQUESTS_KEY, JSON.stringify(clean));
+  } catch (e) {
+    console.error('Failed to save requests to localStorage', e);
+  }
+}
+
 export function saveStoredRequests(requests: LeaveRequest[]) {
   try {
     const currentEmps = getStoredEmployees();
@@ -532,7 +544,6 @@ export function saveStoredRequests(requests: LeaveRequest[]) {
         !r.id?.startsWith('req-today-')
     );
     localStorage.setItem(REQUESTS_KEY, JSON.stringify(clean));
-    syncRequestsToFirestore(clean).catch((e) => console.warn('Firestore request sync error:', e));
     const emps = getStoredEmployees();
     syncToServer(emps, clean);
   } catch (e) {

@@ -15,6 +15,7 @@ import {
   deleteRequestOnServer,
   bulkDeleteRequestsOnServer,
   saveLocalEmployeesOnly,
+  saveLocalRequestsOnly,
   subscribeToBroadcastChannel,
   syncToServer,
   runSecurityAuditAndClean,
@@ -180,8 +181,13 @@ export default function App() {
           console.warn('Server initialization fetch warning:', e);
         }
 
-        // Step 0: Purge residual unauthorized test documents from Firestore
-        cleanupFirestoreUnauthorizedData().catch(() => {});
+        // Step 0: Purge residual unauthorized test documents once per client to conserve Firestore quota
+        try {
+          if (!localStorage.getItem('yaksoo_cleanup_v1')) {
+            await cleanupFirestoreUnauthorizedData();
+            localStorage.setItem('yaksoo_cleanup_v1', '1');
+          }
+        } catch {}
 
         // Prioritize authoritative Cloud Firestore data, then Server, then local
         const empMap = new Map<string, Employee>();
@@ -249,7 +255,7 @@ export default function App() {
         setEmployees(currentEmps);
         setRequests(currentReqs);
         saveLocalEmployeesOnly(currentEmps);
-        saveStoredRequests(currentReqs);
+        saveLocalRequestsOnly(currentReqs);
 
         // Step 2: Resolve authentication session
         const loadedUserId = getStoredCurrentUserId();
@@ -398,12 +404,12 @@ export default function App() {
   const handleLoginSuccess = (emp: Employee, syncedEmployees?: Employee[], syncedRequests?: LeaveRequest[]) => {
     if (syncedEmployees && syncedEmployees.length > 0) {
       setEmployees(syncedEmployees);
-      saveStoredEmployees(syncedEmployees);
+      saveLocalEmployeesOnly(syncedEmployees);
     } else {
       setEmployees((prev) => {
         if (!prev.some((e) => e.id === emp.id)) {
           const next = [...prev, emp];
-          saveStoredEmployees(next);
+          saveLocalEmployeesOnly(next);
           return next;
         }
         return prev;
@@ -412,7 +418,7 @@ export default function App() {
 
     if (syncedRequests && syncedRequests.length > 0) {
       setRequests(syncedRequests);
-      saveStoredRequests(syncedRequests);
+      saveLocalRequestsOnly(syncedRequests);
     }
 
     setCurrentUserId(emp.id);
@@ -902,11 +908,12 @@ export default function App() {
 
     if (updatedEmp) {
       const newEmps = employees.map((e) => (e.id === empId ? updatedEmp : e));
-      updateEmployees(newEmps);
+      setEmployees(newEmps);
+      saveLocalEmployeesOnly(newEmps);
       try {
-        await saveEmployeeToFirestore(updatedEmp);
+        await postSingleEmployeeToServer(updatedEmp);
       } catch (err) {
-        console.error('Firestore retire employee error:', err);
+        console.error('Retire employee error:', err);
       }
       showToast(`'${target?.name || ''}' 직원이 퇴사자로 분류되었습니다.`, 'info');
     }
@@ -921,11 +928,12 @@ export default function App() {
 
     if (updatedEmp) {
       const newEmps = employees.map((e) => (e.id === empId ? updatedEmp : e));
-      updateEmployees(newEmps);
+      setEmployees(newEmps);
+      saveLocalEmployeesOnly(newEmps);
       try {
-        await saveEmployeeToFirestore(updatedEmp);
+        await postSingleEmployeeToServer(updatedEmp);
       } catch (err) {
-        console.error('Firestore restore employee error:', err);
+        console.error('Restore employee error:', err);
       }
       showToast(`'${target?.name || ''}' 직원이 재직자로 정상 복원되었습니다.`, 'success');
     }
