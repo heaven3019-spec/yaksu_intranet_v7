@@ -121,41 +121,66 @@ export async function syncToServer(employees?: Employee[], requests?: LeaveReque
   }
 }
 
+async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = 5000): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // Post single request directly to backend & Firestore for instant real-time recording
 export async function postSingleRequestToServer(newReq: LeaveRequest) {
   let firestoreSaved = false;
-  try {
-    // 1. Write directly to Firestore first for instant cloud persistence
-    await saveLeaveRequestToFirestore(newReq);
-    firestoreSaved = true;
-  } catch (e) {
-    console.error('[Storage] Firestore direct write error:', e);
-  }
+  let serverSaved = false;
+  let validationError: Error | null = null;
 
-  try {
-    // 2. Also notify backend server
-    const token = getAdminToken();
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (token) headers['x-admin-token'] = token;
-
-    const res = await fetch('/api/requests', {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(newReq),
+  const firestorePromise = saveLeaveRequestToFirestore(newReq)
+    .then(() => {
+      firestoreSaved = true;
+    })
+    .catch((e) => {
+      console.error('[Storage] Firestore direct write error:', e);
     });
-    
-    if (!res.ok) {
-      const errData = await res.json().catch(() => ({}));
-      throw new Error(errData.error || '연차 신청 서버 접수에 실패했습니다.');
-    }
 
-    notifyBroadcastChannel('NEW_REQUEST_SUBMITTED', newReq);
-  } catch (err) {
-    console.warn('[Storage] Direct request post warning:', err);
-    if (!firestoreSaved) {
+  const serverPromise = (async () => {
+    try {
+      const token = getAdminToken();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['x-admin-token'] = token;
+
+      const res = await fetchWithTimeout('/api/requests', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(newReq),
+      }, 5000);
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        const err = new Error(errData.error || '연차 신청 서버 접수에 실패했습니다.');
+        if (res.status >= 400 && res.status < 500) {
+          validationError = err;
+        }
+        throw err;
+      }
+      serverSaved = true;
+    } catch (err) {
+      console.warn('[Storage] Direct request post warning:', err);
       throw err;
     }
+  })();
+
+  await Promise.allSettled([firestorePromise, serverPromise]);
+
+  if (validationError) {
+    throw validationError;
   }
+  if (!firestoreSaved && !serverSaved) {
+    throw new Error('서버 및 클라우드 연결에 실패했습니다. 네트워크 상태를 확인 후 다시 시도해주세요.');
+  }
+  notifyBroadcastChannel('NEW_REQUEST_SUBMITTED', newReq);
 }
 
 // Update single request status (Approve, Reject, Cancel) on server & Firestore
@@ -165,11 +190,11 @@ export async function patchRequestOnServer(requestId: string, updates: Partial<L
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (token) headers['x-admin-token'] = token;
 
-    await fetch(`/api/requests/${requestId}`, {
+    await fetchWithTimeout(`/api/requests/${requestId}`, {
       method: 'PATCH',
       headers,
       body: JSON.stringify(updates),
-    }).catch((e) => console.warn('Server patch request warning:', e));
+    }, 5000).catch((e) => console.warn('Server patch request warning:', e));
 
     notifyBroadcastChannel('REQUEST_UPDATED', { id: requestId, updates });
   } catch (err) {
@@ -180,9 +205,9 @@ export async function patchRequestOnServer(requestId: string, updates: Partial<L
 // Delete single request on server
 export async function deleteRequestOnServer(requestId: string) {
   try {
-    await fetch(`/api/requests/${requestId}`, {
+    await fetchWithTimeout(`/api/requests/${requestId}`, {
       method: 'DELETE',
-    }).catch((e) => console.warn('Server delete request warning:', e));
+    }, 5000).catch((e) => console.warn('Server delete request warning:', e));
 
     notifyBroadcastChannel('REQUEST_DELETED', { id: requestId });
   } catch (err) {
@@ -193,11 +218,11 @@ export async function deleteRequestOnServer(requestId: string) {
 // Bulk delete requests on server
 export async function bulkDeleteRequestsOnServer(requestIds: string[]) {
   try {
-    await fetch('/api/requests/bulk-delete', {
+    await fetchWithTimeout('/api/requests/bulk-delete', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ requestIds }),
-    }).catch((e) => console.warn('Server bulk delete warning:', e));
+    }, 5000).catch((e) => console.warn('Server bulk delete warning:', e));
 
     notifyBroadcastChannel('REQUESTS_BULK_DELETED', { requestIds });
   } catch (err) {
@@ -208,11 +233,11 @@ export async function bulkDeleteRequestsOnServer(requestIds: string[]) {
 // Change employee password on server
 export async function changePasswordOnServer(employeeId: string, newPassword: string): Promise<boolean> {
   try {
-    const res = await fetch('/api/users/change-password', {
+    const res = await fetchWithTimeout('/api/users/change-password', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ employeeId, newPassword }),
-    });
+    }, 5000);
     if (res.ok) {
       notifyBroadcastChannel('PASSWORD_CHANGED', { employeeId });
       return true;
@@ -224,38 +249,62 @@ export async function changePasswordOnServer(employeeId: string, newPassword: st
   }
 }
 
-// Post single employee directly to backend & Firestore for instant real-time registration
+// Post single employee directly to backend & Firestore for instant real-time registration/update
 export async function postSingleEmployeeToServer(newEmp: Employee) {
-  try {
-    // 1. Write directly to Firestore first for instant cloud persistence
-    await saveEmployeeToFirestore(newEmp);
-  } catch (e) {
-    console.error('[Storage] Firestore direct employee write error:', e);
-    throw e;
-  }
+  let firestoreSaved = false;
+  let serverSaved = false;
+  let validationError: Error | null = null;
+  let lastError: Error | null = null;
 
-  try {
-    // 2. Also notify backend server with Admin Token
-    const token = getAdminToken() || 'adm_master_session_default';
-    const res = await fetch('/api/employees', {
+  const token = getAdminToken() || 'adm_master_session_default';
+
+  const serverPromise = (async () => {
+    const res = await fetchWithTimeout('/api/employees', {
       method: 'POST',
-      headers: { 
+      headers: {
         'Content-Type': 'application/json',
         'x-admin-token': token,
       },
       body: JSON.stringify(newEmp),
-    });
+    }, 5000);
 
     if (!res.ok) {
       const errData = await res.json().catch(() => ({}));
-      throw new Error(errData.error || '직원 등록 서버 처리에 실패했습니다.');
+      const err = new Error(errData.error || '직원 정보 서버 저장에 실패했습니다.');
+      if (res.status >= 400 && res.status < 500) {
+        validationError = err;
+      }
+      throw err;
     }
-
-    notifyBroadcastChannel('EMPLOYEE_UPDATED', newEmp);
-  } catch (err) {
-    console.warn('[Storage] Direct employee post error:', err);
+    serverSaved = true;
+  })().catch((err: any) => {
+    console.warn('[Storage] Direct employee server post error:', err);
+    lastError = err instanceof Error ? err : new Error(String(err));
     throw err;
+  });
+
+  // Wait for backend validation first if fast, while starting Firestore save in parallel
+  const firestorePromise = saveEmployeeToFirestore(newEmp)
+    .then(() => {
+      firestoreSaved = true;
+    })
+    .catch((err: any) => {
+      console.error('[Storage] Firestore direct employee write error:', err);
+      lastError = err instanceof Error ? err : new Error(String(err));
+      throw err;
+    });
+
+  await Promise.allSettled([serverPromise, firestorePromise]);
+
+  if (validationError) {
+    throw validationError;
   }
+
+  if (!firestoreSaved && !serverSaved) {
+    throw lastError || new Error('서버 및 클라우드 저장에 실패했습니다. 잠시 후 다시 시도해주세요.');
+  }
+
+  notifyBroadcastChannel('EMPLOYEE_UPDATED', newEmp);
 }
 
 // Direct authentication check against backend server

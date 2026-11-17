@@ -1,6 +1,7 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { 
-  getFirestore, 
+  getFirestore,
+  initializeFirestore,
   collection, 
   doc, 
   setDoc, 
@@ -28,11 +29,35 @@ const firebaseConfig = {
 // Initialize Firebase App
 const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 
-// Initialize Cloud Firestore with specified database ID
-export const db = getFirestore(
-  app, 
-  firebaseConfig.firestoreDatabaseId
-);
+// Initialize Cloud Firestore with specified database ID + auto long-polling fallback
+let dbInstance;
+try {
+  dbInstance = initializeFirestore(
+    app,
+    { experimentalAutoDetectLongPolling: true },
+    firebaseConfig.firestoreDatabaseId
+  );
+} catch {
+  dbInstance = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+}
+export const db = dbInstance;
+
+function withFirestoreTimeout<T>(promise: Promise<T>, timeoutMs = 4500, label = 'Firestore'): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`${label} 응답 시간이 초과되었습니다.`));
+    }, timeoutMs);
+    promise
+      .then((res) => {
+        clearTimeout(timer);
+        resolve(res);
+      })
+      .catch((err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+  });
+}
 
 export const EMPLOYEES_COLLECTION = 'employees';
 export const REQUESTS_COLLECTION = 'leave_requests';
@@ -68,7 +93,7 @@ export async function saveEmployeeToFirestore(employee: Employee): Promise<void>
   try {
     const docRef = doc(db, EMPLOYEES_COLLECTION, employee.id);
     const cleanData = sanitizeForFirestore(employee);
-    await setDoc(docRef, cleanData, { merge: true });
+    await withFirestoreTimeout(setDoc(docRef, cleanData, { merge: true }), 4500, '직원 정보 저장');
     console.log('[Firestore] Successfully saved employee:', employee.id, employee.loginId);
   } catch (err) {
     console.error('[Firestore] Error saving employee to Firestore:', err);
@@ -105,7 +130,7 @@ export async function saveLeaveRequestToFirestore(request: LeaveRequest): Promis
   try {
     const docRef = doc(db, REQUESTS_COLLECTION, request.id);
     const cleanData = sanitizeForFirestore(request);
-    await setDoc(docRef, cleanData, { merge: true });
+    await withFirestoreTimeout(setDoc(docRef, cleanData, { merge: true }), 4500, '연차 신청 저장');
     console.log('[Firestore] Successfully saved leave request:', request.id);
   } catch (err) {
     console.error('[Firestore] Error saving leave request to Firestore:', err);
@@ -119,7 +144,7 @@ export async function saveLeaveRequestToFirestore(request: LeaveRequest): Promis
 export async function deleteLeaveRequestToFirestore(requestId: string): Promise<void> {
   try {
     const docRef = doc(db, REQUESTS_COLLECTION, requestId);
-    await deleteDoc(docRef);
+    await withFirestoreTimeout(deleteDoc(docRef), 4500, '연차 삭제');
     console.log('[Firestore] Successfully deleted leave request:', requestId);
   } catch (err) {
     console.error('[Firestore] Error deleting leave request from Firestore:', err);

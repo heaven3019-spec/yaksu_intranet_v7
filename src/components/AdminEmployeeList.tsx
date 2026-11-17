@@ -72,6 +72,7 @@ export const AdminEmployeeList: React.FC<AdminEmployeeListProps> = ({
 
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [addError, setAddError] = useState<string>('');
+  const [isSavingAdd, setIsSavingAdd] = useState(false);
   const [editEmpModal, setEditEmpModal] = useState<Employee | null>(null);
   const [editError, setEditError] = useState<string>('');
   const [isSavingEdit, setIsSavingEdit] = useState(false);
@@ -189,27 +190,34 @@ export const AdminEmployeeList: React.FC<AdminEmployeeListProps> = ({
       return;
     }
 
-    await onAddEmployee({
-      loginId: generatedLoginId,
-      password: cleanPassword,
-      name: newName.trim(),
-      position: newPosition.trim() || '직원',
-      email: newEmail.trim() || `${generatedLoginId}@yaksoo.kr`,
-      phone: newPhone.trim(),
-      joinDate: newJoinDate,
-      role: 'EMPLOYEE',
-      status: 'ACTIVE',
-      calculationMode: newCalculationMode,
-      manualBaseGrantedDays: newCalculationMode === 'MANUAL' ? Number(newManualDays) : undefined,
-      extraGrantedDays: Number(newExtraDays) || 0,
-      avatarColor: 'from-blue-500 to-indigo-600',
-    });
+    setIsSavingAdd(true);
+    try {
+      await onAddEmployee({
+        loginId: generatedLoginId,
+        password: cleanPassword,
+        name: newName.trim(),
+        position: newPosition.trim() || '직원',
+        email: newEmail.trim() || `${generatedLoginId}@yaksoo.kr`,
+        phone: newPhone.trim(),
+        joinDate: newJoinDate,
+        role: 'EMPLOYEE',
+        status: 'ACTIVE',
+        calculationMode: newCalculationMode,
+        manualBaseGrantedDays: newCalculationMode === 'MANUAL' ? Number(newManualDays) : undefined,
+        extraGrantedDays: Number(newExtraDays) || 0,
+        avatarColor: 'from-blue-500 to-indigo-600',
+      });
 
-    setIsAddModalOpen(false);
-    setNewName('');
-    setNewLoginId('');
-    setNewPassword('1234');
-    setNewCalculationMode('AUTO');
+      setIsAddModalOpen(false);
+      setNewName('');
+      setNewLoginId('');
+      setNewPassword('1234');
+      setNewCalculationMode('AUTO');
+    } catch (err: any) {
+      setAddError(err?.message || '직원 등록 중 오류가 발생했습니다.');
+    } finally {
+      setIsSavingAdd(false);
+    }
   };
 
   const handleSaveEdit = async (e: React.FormEvent) => {
@@ -649,6 +657,7 @@ export const AdminEmployeeList: React.FC<AdminEmployeeListProps> = ({
                         <button
                           onClick={() => {
                             setEditError('');
+                            setIsSavingEdit(false);
                             setEditEmpModal({
                               ...emp,
                               password: emp.password || (emp.role === 'ADMIN' ? '0410' : '1234'),
@@ -1008,9 +1017,10 @@ export const AdminEmployeeList: React.FC<AdminEmployeeListProps> = ({
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2.5 text-xs font-bold rounded-xl bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white shadow-md shadow-blue-600/20 cursor-pointer"
+                  disabled={isSavingAdd}
+                  className="px-5 py-2.5 text-xs font-bold rounded-xl bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white shadow-md shadow-blue-600/20 cursor-pointer disabled:opacity-50"
                 >
-                  직원 등록 완료
+                  {isSavingAdd ? '등록 중...' : '직원 등록 완료'}
                 </button>
               </div>
             </form>
@@ -1032,7 +1042,14 @@ export const AdminEmployeeList: React.FC<AdminEmployeeListProps> = ({
                   입사일 및 연차 산정 방식(법정 자동 vs 관리자 수동 지정)을 변경합니다.
                 </p>
               </div>
-              <button onClick={() => setEditEmpModal(null)} className="text-slate-400 hover:text-white cursor-pointer">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsSavingEdit(false);
+                  setEditEmpModal(null);
+                }}
+                className="text-slate-400 hover:text-white cursor-pointer"
+              >
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -1180,9 +1197,11 @@ export const AdminEmployeeList: React.FC<AdminEmployeeListProps> = ({
               <div className="flex justify-end space-x-2 pt-4 border-t border-slate-100">
                 <button
                   type="button"
-                  onClick={() => setEditEmpModal(null)}
-                  disabled={isSavingEdit}
-                  className="px-4 py-2.5 text-xs font-semibold rounded-xl border border-slate-200 text-slate-700 hover:bg-slate-50 cursor-pointer disabled:opacity-50"
+                  onClick={() => {
+                    setIsSavingEdit(false);
+                    setEditEmpModal(null);
+                  }}
+                  className="px-4 py-2.5 text-xs font-semibold rounded-xl border border-slate-200 text-slate-700 hover:bg-slate-50 cursor-pointer"
                 >
                   취소
                 </button>
